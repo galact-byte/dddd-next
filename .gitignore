@@ -1,0 +1,48 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dddd
+dddd-next
+/bin/
+/dist/
+
+# Test / coverage
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config / outputs
+result.txt
+*.html
+audit.log
+.env
+.env.local
+
+# Cache / downloaded templates
+configs/nuclei-templates/
+.cache/
+
+# AI tooling (CLAUDE rule: never commit these)
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+.omc/
+.claude/
