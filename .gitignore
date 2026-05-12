@@ -4,8 +4,8 @@
 *.dll
 *.so
 *.dylib
-dddd
-dddd-next
+/dddd
+/dddd-next
 /bin/
 /dist/
 
