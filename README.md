@@ -85,6 +85,30 @@ go build -o dddd ./cmd/dddd
 ./dddd -t 'icp.name="某公司"' -hunter -oip
 ```
 
+### 代理配置（拉取 nuclei-templates 慢/失败时）
+
+`dddd update` 内部调用系统 `git`，会**自动尊重** `HTTP_PROXY` / `HTTPS_PROXY` 环境变量。
+
+Windows CMD：
+```cmd
+set HTTP_PROXY=http://127.0.0.1:7890
+set HTTPS_PROXY=http://127.0.0.1:7890
+dddd update
+```
+
+Windows PowerShell：
+```powershell
+$env:HTTP_PROXY="http://127.0.0.1:7890"
+$env:HTTPS_PROXY="http://127.0.0.1:7890"
+.\dddd update
+```
+
+Linux / macOS：
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7890
+./dddd update
+```
+
 ## 致谢
 
 - [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) — 原项目作者，本项目的设计灵感与指纹库格式来源
