@@ -6,6 +6,95 @@
 > - v0.1.1-foundation: 数据资产迁移完成；输入分类器 + 配置加载模块上线（31 测试全绿）
 > - v0.1.2-engine: 指纹 DSL 引擎、报告生成（TXT/JSON/HTML）、审计日志全部上线（74 测试全绿，DSL 实战 lint 99.96%）
 > - v0.1.3-update: updater 子命令上线，nuclei-templates 真实拉取成功（13084 模板，原版仅 2406，**多 5.4 倍**）；fingerprint Engine 完整闭环
+> - v0.1.4-httpprobe: 首个 projectdiscovery 外部依赖落地——`httpx v1.9.0` 集成；channel-based API 取代原 dddd 的全局 Map+Mutex 模式；94 测试全绿
+
+---
+
+## v0.1.4-httpprobe — httpx 集成 + 设计哲学边界确立
+
+### 关键成果
+
+- **go.mod 首次引入外部依赖**：`github.com/projectdiscovery/httpx v1.9.0` + `github.com/projectdiscovery/goflags v0.1.74`，共 **169 行 go.mod / 770 行 go.sum**（含 ~160 个 transitive 包）
+- **无 `replace` 指令** —— Constraint 守住喵：所有 projectdiscovery 库走主线版本
+- **二进制 3.1 MB**，`go tool nm` 验证不含 `vulncheck` 等 transitive 但未引用的攻击载荷包符号
+
+### 新增文件
+
+#### `internal/discovery/httpprobe/probe.go` + 测试 — HTTP 探测包装层
+
+- **功能**：把 `projectdiscovery/httpx/runner` 的 50+ 字段 `Result` 投影成 dddd-next 用得到的 ~20 字段 `Response`，并用 channel 取代原 dddd 的全局 Map+Mutex 状态
+- **核心 API**：
+  ```go
+  type Probe struct{ ... }
+  func New(opts Options) *Probe
+  func (p *Probe) Run(ctx context.Context) (<-chan Response, error)
+  func ToFingerprintContext(r Response) fingerdsl.Context
+  ```
+- **设计要点**：
+  - 投影 (narrowing)：上游 50+ 字段变化不会传染到下游 fingerprint / reporter
+  - 切片隔离：`toResponse` 用 `append([]string(nil), x...)` 复制 Technologies / A，杜绝外部 mutation
+  - context 贯穿：channel send 用 `select { case <-ctx.Done(): }` 优雅取消
+  - `ToFingerprintContext` 直接把 Response 转成 fingerdsl 能消费的 Context，**正式联通"采集→指纹"链路**
+- **测试覆盖**：7 个用例（默认值、自定义值、空目标拒绝、字段映射、Err 序列化、slice 隔离、ToFingerprintContext）
+
+### 安全审计：vulncheck/go-exploit 事件
+
+`go mod tidy` 引入的 transitive 依赖中包含 `github.com/vulncheck-oss/go-exploit v1.51.0`——这是 VulnCheck 公司的**漏洞利用框架**，里面 `payload/webshell/` 含真实攻击载荷。
+
+**调查与处置**：
+1. `go mod why vulncheck-oss/go-exploit` → "main module does not need" — dddd-next 代码路径不引用
+2. `go tool nm dddd-next.exe | grep vulncheck` → **0 个符号** — 二进制完全不链接它
+3. 火绒拦截 `webshell.go` / `reverse.go` 等文件 — **完全不影响** build / test / run
+4. **结论：保持火绒隔离，绝对不加白名单**
+
+**设计哲学补充**：dddd-next 与原 dddd 一致，定位是**漏洞扫描器**（reconnaissance + detection），不是**漏洞利用器**。要点写入 `docs/DEV_NOTES.md`：
+- 扫描和利用应是两套独立工具（关注点分离）
+- 自动化"打 webshell"在多数司法管辖区是刑事犯罪
+- 内嵌攻击载荷会让整个二进制被杀软全军覆没
+- 真需要利用，应该用专用工具（Behinder/Godzilla/Metasploit）跑在隔离环境
+
+### 主人开发环境调整记录
+
+主人把 Go cache 挪到 D 盘脱离系统盘：
+
+| 变量 | 新位置 |
+|:---|:---|
+| `GOPATH` | `D:\Tools\Go\Cache\goPath` |
+| `GOMODCACHE` | `D:\Tools\Go\Cache\goCache`（**不在 GOPATH 下面**，是独立目录） |
+
+详细操作姿势见 `docs/DEV_NOTES.md`。
+
+### 新增文件
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| **新增** | `internal/discovery/httpprobe/probe.go` |
+| **新增** | `internal/discovery/httpprobe/probe_test.go` |
+| **新增** | `docs/DEV_NOTES.md` |
+| **修改** | `go.mod`（5 → 169 行，首次外部依赖） |
+| **新增** | `go.sum`（770 行） |
+
+---
+
+## 测试方式
+
+```bash
+cd D:/Software/VsCode/Program/DDDD/dddd-next
+# 当前 shell 已读到正确 GOPATH/GOMODCACHE 的情况：
+go test -count=1 ./...
+# 否则需要前缀：
+GOMODCACHE="D:/Tools/Go/Cache/goCache" GOPATH="D:/Tools/Go/Cache/goPath" go test -count=1 ./...
+```
+
+实测结果（共 94 用例全绿）：
+- `ok dddd-next/internal/audit             0.964s` (2)
+- `ok dddd-next/internal/classifier        0.920s` (24)
+- `ok dddd-next/internal/config            0.883s` (7)
+- `ok dddd-next/internal/discovery/httpprobe 9.917s` (**7 新增**)
+- `ok dddd-next/internal/fingerprint       2.484s` (6)
+- `ok dddd-next/internal/reporter          2.212s` (4)
+- `ok dddd-next/internal/updater           1.472s` (7)
+- `ok dddd-next/pkg/fingerdsl              2.472s` (35 + 实战 lint)
 
 ---
 
