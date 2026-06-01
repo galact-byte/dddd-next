@@ -7,6 +7,83 @@
 > - v0.1.2-engine: 指纹 DSL 引擎、报告生成（TXT/JSON/HTML）、审计日志全部上线（74 测试全绿，DSL 实战 lint 99.96%）
 > - v0.1.3-update: updater 子命令上线，nuclei-templates 真实拉取成功（13084 模板，原版仅 2406，**多 5.4 倍**）；fingerprint Engine 完整闭环
 > - v0.1.4-httpprobe: 首个 projectdiscovery 外部依赖落地——`httpx v1.9.0` 集成；channel-based API 取代原 dddd 的全局 Map+Mutex 模式；94 测试全绿
+> - v0.1.5-nuclei: **最重大引擎集成**——nuclei v3.8.0 public lib SDK 适配层（callback→channel 包装，`ResultEvent`→`Finding` 投影）；项目首个 `replace`（client-go 依赖冲突修复，非 vendored fork，属约定内例外）；`go test ./...` 10 包回归全绿
+
+---
+
+## v0.1.5-nuclei — nuclei v3.8.0 引擎适配层（dddd-next 最核心的集成）
+
+### 关键成果
+
+- **整个项目最重大的引擎集成**：把 `github.com/projectdiscovery/nuclei/v3 v3.8.0` 的 public lib SDK 包装成 channel-based、对调用方友好的 API——这是 dddd-next "扫描"能力的心脏喵。
+- **彻底脱离 fork**：原 dddd 调用自己 fork 的 `exportrunner.ExportRunnerNew`，直接 reach into nuclei 私有包；dddd-next **只用上游公开 lib SDK** 的合同：`NewNucleiEngineCtx → LoadAllTemplates → LoadTargets → ExecuteCallbackWithCtx → Close`。合同之外的能力必须在 SDK 之上重建，不再触碰私有包。
+- **投影边界 (projection boundary)**：`output.ResultEvent`（50+ 字段）→ `types.Finding`（~20 字段），调用方**永不 import 任何 nuclei 包**，上游字段 churn 止步于 `toFinding`——和 httpprobe 同一套设计心智。
+- **callback→channel 包装**：nuclei 的 callback 式 SDK 被包成 findings channel + errCh，与 `internal/discovery/httpprobe` 暴露 httpx 结果的方式一致，全项目统一心智模型。
+
+### 新增文件
+
+#### `internal/scanner/nuclei/scanner.go`（309 行）+ `scanner_test.go`（235 行）— nuclei 适配层
+
+- **功能**：包装 nuclei v3.8.0 lib SDK，对外提供 `Scanner` + channel API
+- **核心 API**：
+  ```go
+  type Options struct{ TemplatesDir; TemplateIDs; Tags; Severities; Proxy; Concurrency; ... }
+  func DefaultOptions() Options          // Concurrency=25, DisableUpdate=true, Silent=true, ResponseReadSize=5MiB
+  func New(ctx, opts) (*Scanner, error)
+  func (s *Scanner) Scan(ctx, targets) (<-chan types.Finding, <-chan error, error)
+  func (s *Scanner) Close() error        // nil-safe，可重复调用
+  ```
+- **设计要点**：
+  - `TemplateIDs` 是**指纹引擎与定向 POC 执行的桥梁**：指纹命中 → 模板 ID 列表 → 只跑这些模板（精准打击，不全量轰炸）
+  - `DisableUpdate` 默认 true → `WithTemplateUpdateCallback(true, nil)` 关掉 nuclei 自更新，模板生命周期归 `dddd update` 管，杜绝两套更新机制打架
+  - `hasFilters` 守卫：空 filter 会被 nuclei 当成"匹配空集"而非"不过滤"，所以只在真有过滤项时才 `WithTemplateFilters`
+  - `pickTarget` 优先级：`Matched`（最精确命中点）> `URL` > `Host:Port` > `Host`
+  - `mapSeverity` 把 nuclei severity 归一到 `types.Severity`，未知/空值兜底 `SeverityInfo`，报告排序器永不会收到不认识的等级
+  - 切片防御性复制（`sliceCopy`）：`References` / `Tags` 拷贝后交出，杜绝下游通过共享底层数组 mutate nuclei 内部状态；空/nil 输入返回 nil，保持 JSON 干净
+  - context 贯穿：channel send 用 `select { case <-ctx.Done(): }`，取消即停
+- **测试覆盖**：10 个测试函数（含 `TestPickTarget` 5 子用例，共 15 PASS）——默认值、severity 映射（大小写/空格/未知值兜底）、slice 拷贝隔离、target 优先级、Finding 投影、nil Reference 兜底、filter 守卫、SDK options 构建（基于 `DefaultOptions` 再填 `TemplatesDir/IDs/Severities/Proxy` 后断言产出 **7** 个 option）、空目标拒绝、Close nil 安全
+
+### go.mod：项目首个 `replace` 指令（Constraint 破例记录）
+
+v0.1.4 立过 Constraint：**"无 replace，所有 projectdiscovery 库走主线版本"**。v0.1.5 出现了项目第一个 replace，必须诚实交代为何破例：
+
+- **冲突根因**：nuclei v3.8.0 期望 `gitlab.com/gitlab-org/api/client-go v0.130.1`，但 `go mod tidy` 经由 `github.com/happyhackingspace/dit@v0.0.14` 把它**上拉到 v1.9.1**。两版本 API 不兼容，导致 nuclei 的 `pkg/reporting/trackers/gitlab/gitlab.go` 编译失败（`cannot use user.ID (int64) as int` 等）。
+- **确认在链路内**：`go list -test -deps` 验证 gitlab tracker 确实在 nuclei 的导入链里，不是误报。
+- **决策**：`replace gitlab.com/gitlab-org/api/client-go => gitlab.com/gitlab-org/api/client-go v0.130.1`
+- **为何不违背初衷**：replace 目标是**上游同一模块的另一个发行版本**（v1.9.1 → v0.130.1），**不是本地 vendored fork**。这正属于最初约定中**唯一允许 replace 的场景：上游传递依赖版本冲突修复**。dddd-next 的"不 fork、走主线"原则依旧成立喵。
+
+### 安全审计：vulncheck/go-exploit 经 dsl 包级链入（v0.1.4 结论更新）
+
+遵守 v0.1.4 commit 立的 Directive（"加 nuclei 时重查 vulncheck"），本次复审发现**状态变化**：
+
+- **引入链锁定**：`internal/scanner/nuclei` → `nucleilib` → `projectdiscovery/dsl@v0.8.14/deserialization/dotnet_deserialization.go:10` → `import go-exploit/dotnet`
+- **真凶是官方库 dsl**（nuclei 表达式引擎），非野库；`go mod graph` 确认 dsl / httpx / nuclei 三个 projectdiscovery 库都 require go-exploit
+- **包级真实 import 4 子包**：`output`(日志) / `random`(随机) / `transform`(编码) / `dotnet`(.NET gadget 生成)，均无 `//go:build` 标签 → **不可裁剪**
+- **与 v0.1.4 差异**：v0.1.4 时 `go mod why` 报 "main does not need"（httpx 声明但被 DCE 消除）；v0.1.5 nuclei/dsl 链路**真实 import**，接入 main 后二进制将含 vulncheck 符号
+- **最危险载荷未链入**：`payload/webshell` `reverse` `bindshell` 不在 `go list -deps` 结果中，不进二进制
+- **决策（主人拍板）**：**接受**——官方依赖、检测用途（非 webshell 植入）、放弃 nuclei 不可行。火绒隔离原则不变（绝不加白名单）。完整脉络见 `docs/DEV_NOTES.md`
+
+### 测试与验证
+
+- `go test ./internal/scanner/nuclei/`：10 测试函数全绿（首次编译 37s，缓存后 ~5s）
+- `go test ./...`：**10 个 Go 包全部回归通过**（audit / classifier / config / discovery·httpprobe / fingerprint / reporter / scanner·nuclei / updater / pkg·fingerdsl；cmd/dddd 与 internal/types 无测试文件），exit 0
+- 顺带验证 gitlab replace 生效：nuclei 包能 PASS ⟺ gitlab tracker 编译通过（nuclei 适配层导入 `nucleilib`，会拉入 gitlab tracker，编译不过则整包过不了）
+
+### 文件清单总览
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| **新增** | `internal/scanner/nuclei/scanner.go` |
+| **新增** | `internal/scanner/nuclei/scanner_test.go` |
+| **修改** | `go.mod`（+`nuclei/v3 v3.8.0` 直接依赖 + 首个 `replace`） |
+| **修改** | `go.sum`（nuclei transitive 依赖） |
+
+### 测试方式
+
+1. `cd D:/Software/VsCode/Program/DDDD/dddd-next`
+2. 设缓存路径：`GOPATH=D:/Tools/Go/Cache/goPath`、`GOMODCACHE=D:/Tools/Go/Cache/goCache`
+3. 跑 `go test ./internal/scanner/nuclei/ -v` → 期望 10 测试函数全 PASS
+4. 跑 `go test ./...` → 期望 10 包 ok，exit 0
 
 ---
 
