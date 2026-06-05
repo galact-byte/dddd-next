@@ -1,10 +1,11 @@
 // Package app wires the discovery and scanning modules into one scan pipeline
 // driven by config.Config. It is the workflow layer the CLI calls.
 //
-// Stage flow (weak-cred brute force and recon APIs land later):
+// Stage flow (recon APIs land later):
 //
-//	targets -> classify -> [CIDR/range port scan] -> [subdomain enum]
-//	        -> DNS resolve -> HTTP probe -> fingerprint -> nuclei -> report
+//	targets -> classify -> [CIDR/range port scan -> brute force]
+//	        -> [subdomain enum] -> DNS resolve -> HTTP probe -> fingerprint
+//	        -> nuclei -> report
 package app
 
 import (
@@ -23,6 +24,7 @@ import (
 	"dddd-next/internal/discovery/subfinder"
 	"dddd-next/internal/fingerprint"
 	"dddd-next/internal/reporter"
+	"dddd-next/internal/scanner/gopocs"
 	"dddd-next/internal/scanner/nuclei"
 	"dddd-next/internal/types"
 )
@@ -67,7 +69,11 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	probeInputs, domains, portscanSpecs := p.parseTargets()
 
 	if len(portscanSpecs) > 0 {
-		probeInputs = append(probeInputs, p.scanPorts(ctx, portscanSpecs)...)
+		openPorts := p.scanPorts(ctx, portscanSpecs)
+		for _, r := range openPorts {
+			probeInputs = append(probeInputs, fmt.Sprintf("%s:%d", r.Host, r.Port))
+		}
+		p.bruteForce(ctx, openPorts)
 	}
 	if p.cfg.Subdomain && len(domains) > 0 {
 		domains = p.enumerateSubdomains(ctx, domains)
@@ -133,10 +139,10 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs []string)
 	return probeInputs, domains, portscanSpecs
 }
 
-// scanPorts expands CIDR/IP-range specs into hosts, TCP-connect scans the
-// common port set, and returns open "host:port" endpoints for the HTTP probe.
-// Connect scanning is direct (no proxy) so it still works on intranet targets.
-func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []string {
+// scanPorts expands CIDR/IP-range specs into hosts and TCP-connect scans the
+// common port set, returning open ports for both the HTTP probe and the brute
+// forcer. Connect scanning is direct (no proxy) so it works on intranet targets.
+func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Result {
 	hosts, err := portscan.ExpandHosts(specs)
 	if err != nil {
 		fmt.Printf("[!] portscan: %v\n", err)
@@ -145,13 +151,40 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []string {
 	fmt.Printf("[*] port scanning %d host(s) x %d ports...\n", len(hosts), len(portscan.DefaultPorts))
 
 	sc := portscan.New(portscan.DefaultOptions())
-	var open []string
+	var open []portscan.Result
 	for r := range sc.Scan(ctx, hosts) {
-		open = append(open, fmt.Sprintf("%s:%d", r.Host, r.Port))
+		open = append(open, r)
 		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
 	fmt.Printf("[*] open ports: %d\n", len(open))
 	return open
+}
+
+// bruteForce attempts weak credentials against the service ports the scanner
+// found (ssh/mysql/postgresql/redis/ftp), writing each hit to the report. It
+// runs independently of the web probe chain; non-service ports are ignored by
+// the engine's routing.
+func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result) {
+	endpoints := make([]gopocs.Endpoint, 0, len(openPorts))
+	for _, r := range openPorts {
+		endpoints = append(endpoints, gopocs.Endpoint{Host: r.Host, Port: r.Port})
+	}
+
+	dictDir := filepath.Join(p.configDir, "dict")
+	fmt.Printf("[*] weak-credential brute force on %d open port(s)...\n", len(endpoints))
+	eng := gopocs.New(gopocs.DefaultOptions(dictDir))
+
+	n := 0
+	for f := range eng.Run(ctx, endpoints) {
+		if werr := p.reporter.WriteFinding(f); werr != nil {
+			fmt.Printf("[!] report: %v\n", werr)
+		}
+		_ = p.auditor.LogInfo("weak-cred", map[string]any{
+			"id": f.ID, "target": f.Target, "desc": f.Description,
+		})
+		n++
+	}
+	fmt.Printf("[*] weak credentials: %d\n", n)
 }
 
 func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []string {
