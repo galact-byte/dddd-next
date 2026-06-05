@@ -20,7 +20,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.11-dev"
+	appVersion = "0.1.12-dev"
 )
 
 func main() {
@@ -88,6 +88,8 @@ Scan flags:
   -a              enable audit log (audit.log)
   -sd             enumerate subdomains for domain targets
   -proxy <url>    HTTP/SOCKS5 proxy for outgoing requests
+  -full           run all nuclei templates instead of fingerprint-matched POCs
+  -no-general     skip the product-independent General-Poc set (precise mode)
   -log-level      debug | info | warn | error
 
 Subcommands:
@@ -104,6 +106,11 @@ Recon (search-query targets):
   Queries like -t 'app="seeyon"' hit fofa/hunter/quake. Put API keys in a
   .env file next to the binary (copy .env.example): FOFA_EMAIL + FOFA_KEY,
   HUNTER_API_KEY, QUAKE_TOKEN. Free FOFA accounts have no API quota.
+
+Vulnerability scan (nuclei):
+  Default precise mode runs only the POCs a target's fingerprints map to
+  (configs/pocs/mapping.yaml) plus a general POC set — not all 13000+ templates.
+  -full scans every template; -no-general drops the general set.
 
 Inspired by SleepingBag945/dddd (MIT License).
 `, appName, appVersion)

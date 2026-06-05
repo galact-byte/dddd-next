@@ -14,6 +14,7 @@ require (
 	github.com/projectdiscovery/uncover v1.2.1
 	github.com/redis/go-redis/v9 v9.11.0
 	golang.org/x/crypto v0.49.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -401,7 +402,6 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	mellium.im/sasl v0.3.2 // indirect
 	moul.io/http2curl v1.0.0 // indirect
 )

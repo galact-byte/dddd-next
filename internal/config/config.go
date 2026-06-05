@@ -31,6 +31,9 @@ type Config struct {
 	Subdomain bool
 	ProxyURL  string
 
+	FullScan          bool
+	DisableGeneralPoc bool
+
 	LogLevel string
 
 	Subcommand string
@@ -83,6 +86,9 @@ func ParseArgs(args []string) (Config, error) {
 
 	fs.BoolVar(&cfg.Subdomain, "sd", cfg.Subdomain, "enumerate subdomains for domain targets")
 	fs.StringVar(&cfg.ProxyURL, "proxy", cfg.ProxyURL, "HTTP/SOCKS5 proxy URL for outgoing requests")
+
+	fs.BoolVar(&cfg.FullScan, "full", cfg.FullScan, "run all nuclei templates instead of fingerprint-matched POCs")
+	fs.BoolVar(&cfg.DisableGeneralPoc, "no-general", cfg.DisableGeneralPoc, "skip the product-independent General-Poc set in precise mode")
 
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level: debug | info | warn | error")
 
