@@ -10,6 +10,54 @@
 > - v0.1.5-nuclei: **最重大引擎集成**——nuclei v3.8.0 public lib SDK 适配层（callback→channel 包装，`ResultEvent`→`Finding` 投影）；项目首个 `replace`（client-go 依赖冲突修复，非 vendored fork，属约定内例外）；`go test ./...` 10 包回归全绿
 > - v0.1.6-subfinder-dnsx: 资产发现链路补全——subfinder v2.14.0（被动子域枚举，callback→channel）+ dnsx v1.2.3（DNS 解析，单次 + 并发批量）；无 `replace` 冲突；安全复审 616 依赖 0 攻击载荷；12 包回归全绿
 > - v0.1.7-pipeline: **主编排骨架落地**——`internal/app` 把 classifier/subfinder/dnsx/httpx/fingerprint/nuclei/reporter/audit 串成单一扫描工作流；CLI `-t` 扫描模式接入；nm 实测确认 `vulncheck/dotnet` 符号(174)如 Directive 预言入二进制（检测用途，webshell 类 0）；13 包回归全绿
+> - v0.1.8-nuclei-localdir: 端到端冒烟揪出并修复 nuclei bug——引擎用了系统全局（另一个 nuclei CLI 写的）模板目录而非本地 `configs/`，init 联网装模板触发 401 崩溃；改用 `SetTemplatesDir`（内存级）指向本地 + `DisableUpdateCheck` 跳过启动联网；本地靶标实测 13 findings 入报告，13 包回归全绿
+
+---
+
+## v0.1.8-nuclei-localdir — nuclei 改用本地模板目录、扫描不再被联网阻断
+
+### 背景：v0.1.7 端到端冒烟揪出的真 bug
+
+主编排骨架落地后首次跑完整链路（本地靶标），nuclei init 直接失败：
+
+- nuclei 引擎的模板目录取自**进程全局** `config.DefaultConfig.TemplatesDirectory`（`lib/sdk_private.go:197`），**不是**我们 `WithTemplatesOrWorkflows` 传入的路径
+- 该全局值来自系统里**另一个独立安装的 nuclei CLI** 写入的 `%AppData%/nuclei/.templates-config.json`（指向 `D:\work\CTF\...\templates`）
+- init 时发现该目录模板缺失 → 联网拉 GitHub release 安装 → token 失效 401 → `init engine failed`，整条 nuclei 链路崩
+
+### 修复（方案：本地模板 + `dddd update` 联网，职责分离）
+
+`internal/scanner/nuclei/scanner.go`：
+
+- **`config.DefaultConfig.SetTemplatesDir(TemplatesDir)`**（New 中、引擎构造前）：把 nuclei 全局模板目录指向 dddd-next 自己的 `configs/nuclei-templates`。源码确认该 setter **仅改内存、不写磁盘**，不污染系统全局 nuclei 配置
+- **`DisableUpdateCheck()` 取代 `WithTemplateUpdateCallback(true,nil)`**：后者只设 `disableTemplatesAutoUpgrade`，不影响 `CanCheckForUpdates()`，init 仍会 `processUpdateCheckResults()` 联网（401 阻断根因）；`DisableUpdateCheck()` 才真正令 `CanCheckForUpdates()=false`，跳过启动联网检查
+- **非"禁联网"**：模板更新归 `dddd update`（照常联网拉最新），扫描只用本地模板 → 内网外网都稳
+
+### 端到端验证（本地靶标完整链路）
+
+`python http.server` 起本地靶标 `http://127.0.0.1:18080`，`dddd-next -t` 跑通：
+
+`指纹库 8379 → httpx 探测(识别 Python/SimpleHTTP) → 指纹命中 1 → nuclei init ✓ → 13084 模板加载 → 执行 → findings: 13 → 报告`
+
+- 13 findings 全 info 级（11× HTTP Missing Security Headers + 2× Wappalyzer 技术识别），符合本地空服务预期
+- 报告产出：`result.json` 14 条（1 fingerprint + 13 finding）+ HTML 19K
+- 完整回归 **13 包全绿**
+
+### 已知小瑕疵（后续优化）
+
+- 设了 `Silent=true` 但 nuclei 的 INF 日志（network 模板端口探测）仍漏到 stdout，污染进度——待后续静音
+
+### 文件清单总览
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| **修改** | `internal/scanner/nuclei/scanner.go`（SetTemplatesDir + DisableUpdateCheck） |
+| **修改** | `cmd/dddd/main.go`（版本 0.1.7-dev → 0.1.8-dev） |
+
+### 测试方式
+
+1. 确保 `configs/nuclei-templates` 有模板（`dddd update` 拉取）
+2. 起本地 http 服务，`dddd-next -t http://127.0.0.1:PORT`
+3. 期望：nuclei init 不报 401、findings 写入报告；`go test ./...` 13 包全绿
 
 ---
 

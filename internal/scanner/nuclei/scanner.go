@@ -14,9 +14,8 @@
 //   - The callback-based SDK is wrapped into a channel of findings, mirroring
 //     how internal/discovery/httpprobe surfaces httpx results — same mental
 //     model across the project.
-//   - WithTemplateUpdateCallback(true, nil) disables nuclei's auto-update
-//     because dddd-next has its own `dddd update` subcommand. We don't want
-//     two competing update mechanisms.
+//   - DisableUpdateCheck() + SetTemplatesDir pin nuclei to dddd-next's own
+//     templates and skip the startup phone-home; `dddd update` owns updates.
 package nuclei
 
 import (
@@ -28,6 +27,7 @@ import (
 	"dddd-next/internal/types"
 
 	nucleilib "github.com/projectdiscovery/nuclei/v3/lib"
+	nucleiconfig "github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
@@ -99,6 +99,11 @@ type Scanner struct {
 func New(ctx context.Context, opts Options) (*Scanner, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// nuclei resolves templates from a process-global, not from our options;
+	// pin it to ours so it won't fall back to a stray install and phone home.
+	if opts.TemplatesDir != "" {
+		nucleiconfig.DefaultConfig.SetTemplatesDir(opts.TemplatesDir)
 	}
 	sdkOpts := buildSDKOptions(opts)
 	engine, err := nucleilib.NewNucleiEngineCtx(ctx, sdkOpts...)
@@ -208,7 +213,8 @@ func buildSDKOptions(o Options) []nucleilib.NucleiSDKOptions {
 	}))
 
 	if o.DisableUpdate {
-		opts = append(opts, nucleilib.WithTemplateUpdateCallback(true, nil))
+		// The startup update check phones home and aborts init on failure.
+		opts = append(opts, nucleilib.DisableUpdateCheck())
 	}
 
 	if len(o.Proxy) > 0 {
