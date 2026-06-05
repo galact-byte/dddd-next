@@ -12,6 +12,66 @@
 > - v0.1.7-pipeline: **主编排骨架落地**——`internal/app` 把 classifier/subfinder/dnsx/httpx/fingerprint/nuclei/reporter/audit 串成单一扫描工作流；CLI `-t` 扫描模式接入；nm 实测确认 `vulncheck/dotnet` 符号(174)如 Directive 预言入二进制（检测用途，webshell 类 0）；13 包回归全绿
 > - v0.1.8-nuclei-localdir: 端到端冒烟揪出并修复 nuclei bug——引擎用了系统全局（另一个 nuclei CLI 写的）模板目录而非本地 `configs/`，init 联网装模板触发 401 崩溃；改用 `SetTemplatesDir`（内存级）指向本地 + `DisableUpdateCheck` 跳过启动联网；本地靶标实测 13 findings 入报告，13 包回归全绿
 > - v0.1.9-portscan: 自研 TCP connect 端口扫描落地（无 npcap/libpcap，内网友好）——CIDR/IP段展开 + 68 常用端口（刻意覆盖弱口令字典服务）+ dnsx 式 worker-pool 并发；接入主编排，CIDR 不再 skip；本地靶标端到端实测发现 8080(web)/445(SMB)/902(VMware) 三类服务，nuclei 针对性扫出 22 findings；14 包回归全绿
+> - v0.1.10-gopocs: 弱口令爆破模块落地（高频子集+成熟库策略）——ssh/mysql/postgresql/redis/ftp 5 协议 Cracker（复用全家桶已有 client 库，仅新增 jlaffaye/ftp）；统一字典解析(user:pass + 纯密码)、端口→服务路由、per-endpoint 并发；接入端口扫描链路(开放服务端口→爆破)；真实 SSH server 端到端实测命中 root:root 入报告(High)；15 包回归全绿
+
+---
+
+## v0.1.10-gopocs — 弱口令爆破模块（端口扫描发现的服务 → 凭据爆破）
+
+### 关键成果
+
+- **gopocs 弱口令爆破落地**：`internal/scanner/gopocs` 对端口扫描发现的服务端口做凭据爆破，命中写 High Finding。补全 dddd 核心战力之一。
+- **选型：高频子集 + 成熟库**（主人拍板）：先做 ssh/mysql/postgresql/redis/ftp 5 个高频协议，每个 Cracker 包一个成熟 Go client；**5 个库里 4 个早已是全家桶 indirect 依赖**（x/crypto、go-sql-driver/mysql、lib/pq、go-redis），仅 ftp 新增 `jlaffaye/ftp`——几乎零新增攻击面。
+
+### 新增文件
+
+#### `internal/scanner/gopocs/` — 弱口令爆破引擎 + 5 协议 Cracker
+
+- **`gopocs.go`**：`Cracker` 接口（`Try` 三态返回：命中 / auth 拒绝继续 / 连接错放弃该端点）、`Engine`（端口→服务路由 + per-endpoint 并发 + StopOnFirst）、`ParseDict`（`user : pass` 凭据对 + 纯密码两种格式统一解析）。
+- **`ssh/mysql/postgresql/redis/ftp.go`**：各协议 Cracker，关键在区分「auth 拒绝（换下一个密码）」与「连接失败（放弃该端点）」——避免错误密码当成连接错而中断整本字典。
+- 跟随 `internal/scanner/nuclei` 的 channel + `types.Finding` 范式，不实现 `ARCHITECTURE.md` 里那个已被代码超越的抽象 `Scanner` 接口。
+
+### 修改文件
+
+- `internal/app/pipeline.go`：`scanPorts` 改返回结构化 `[]portscan.Result`；新增 `bruteForce` 阶段（开放端口 → gopocs 爆破 → 写报告），与 web 探测链路独立。
+- `cmd/dddd/main.go`：版本 `0.1.9-dev → 0.1.10-dev`。
+- `go.mod`/`go.sum`：新增 `jlaffaye/ftp`，4 个 client 库由 indirect 提为 direct。
+
+### 验证（单测 + 真实二进制端到端）
+
+**单测**（自包含真实协议，无外部依赖）：
+
+- `TestSSHCrackerAgainstLocalServer`：进程内起真实 SSH server，验证正确 cred 命中、错误 cred 干净拒绝
+- `TestEngineRunEndToEndSSH`：Engine 全流程——路由→加载字典→真实爆破→跳过错误密码→命中→High Finding
+- `TestParseDict` / `TestRoutableJobsSkipsUnhandledPorts`：字典解析 + 服务路由
+
+**真实二进制端到端**：临时 SSH 靶机（`127.0.0.1:22`, root:root）+ `dddd-next -t 127.0.0.1/32`：
+
+`端口扫描 68口 → open: 3(含22) → 弱口令爆破 3端口 → weak credentials: 1`
+
+报告写入 `[HIGH] 127.0.0.1:22 | Weak Credential (ssh)`。非服务端口（445/902）被路由正确跳过。
+
+- 完整回归 **15 包全绿**（新增 gopocs 包）
+
+### 文件清单总览
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| **新增** | `internal/scanner/gopocs/{gopocs,ssh,mysql,postgresql,redis,ftp}.go` + `gopocs_test.go` |
+| **修改** | `internal/app/pipeline.go`（bruteForce 阶段接入） |
+| **修改** | `cmd/dddd/main.go`（版本号） |
+| **修改** | `go.mod` / `go.sum`（jlaffaye/ftp + 4 库提 direct） |
+
+### 后续可扩展
+
+- 协议：mssql/oracle/smb/mongodb/rdp/telnet（字典已备，库多数在依赖里），加 Cracker + 注册即可
+- 无密码服务（如 unauth redis）交给 nuclei 模板，gopocs 专注凭据爆破
+
+### 测试方式
+
+1. 起服务（如本地 ssh，弱口令）
+2. `dddd-next -t <CIDR>`，端口扫描发现服务端口后自动爆破
+3. 期望：`weak-credential brute force ... → weak credentials: N`，命中写 High Finding；`go test ./...` 15 包全绿
 
 ---
 

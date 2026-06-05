@@ -3,11 +3,16 @@ module dddd-next
 go 1.26.3
 
 require (
+	github.com/go-sql-driver/mysql v1.9.3
+	github.com/jlaffaye/ftp v0.0.0-20190624084859-c1312a7102bf
+	github.com/lib/pq v1.11.2
 	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/goflags v0.1.74
 	github.com/projectdiscovery/httpx v1.9.0
 	github.com/projectdiscovery/nuclei/v3 v3.8.0
 	github.com/projectdiscovery/subfinder/v2 v2.14.0
+	github.com/redis/go-redis/v9 v9.11.0
+	golang.org/x/crypto v0.49.0
 )
 
 require (
@@ -152,7 +157,6 @@ require (
 	github.com/go-playground/validator/v10 v10.26.0 // indirect
 	github.com/go-rod/rod v0.116.2 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
-	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goburrow/cache v0.1.4 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
@@ -216,7 +220,6 @@ require (
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/leslie-qiwa/flat v0.0.0-20230424180412-f9d1cf014baa // indirect
-	github.com/lib/pq v1.11.2 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect
 	github.com/logrusorgru/aurora/v4 v4.0.0 // indirect
@@ -302,7 +305,6 @@ require (
 	github.com/projectdiscovery/utils v0.10.1 // indirect
 	github.com/projectdiscovery/wappalyzergo v0.2.76 // indirect
 	github.com/projectdiscovery/yamldoc-go v1.0.6 // indirect
-	github.com/redis/go-redis/v9 v9.11.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/remeh/sizedwaitgroup v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -383,7 +385,6 @@ require (
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	goftp.io/server/v2 v2.0.1 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
