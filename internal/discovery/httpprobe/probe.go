@@ -103,6 +103,9 @@ func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 		NoColor:                   true,
 		MaxResponseBodySizeToRead: p.opts.MaxBodyBytes,
 		MaxResponseBodySizeToSave: p.opts.MaxBodyBytes,
+		// httpx fills Result.ResponseBody / RawHeaders only when this is set
+		// (runner.go ~2174); without it, body= and header= fingerprints never hit.
+		ResponseInStdout: true,
 		OnResult: func(r runner.Result) {
 			if r.Failed {
 				return

@@ -37,6 +37,10 @@ type Options struct {
 	// When empty, nuclei falls back to its built-in default location.
 	TemplatesDir string
 
+	// Templates is an explicit list of POC file paths. When set, nuclei loads
+	// exactly these instead of walking TemplatesDir — the fingerprint→POC path.
+	Templates []string
+
 	// TemplateIDs filters templates by their `id:` field. This is the bridge
 	// between dddd-next's fingerprint engine and targeted POC execution —
 	// fingerprint hits → list of template IDs → only those templates run.
@@ -177,7 +181,12 @@ func (s *Scanner) Close() error {
 func buildSDKOptions(o Options) []nucleilib.NucleiSDKOptions {
 	var opts []nucleilib.NucleiSDKOptions
 
-	if o.TemplatesDir != "" {
+	switch {
+	case len(o.Templates) > 0:
+		opts = append(opts, nucleilib.WithTemplatesOrWorkflows(nucleilib.TemplateSources{
+			Templates: o.Templates,
+		}))
+	case o.TemplatesDir != "":
 		opts = append(opts, nucleilib.WithTemplatesOrWorkflows(nucleilib.TemplateSources{
 			Templates: []string{o.TemplatesDir},
 		}))

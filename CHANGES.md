@@ -14,6 +14,45 @@
 > - v0.1.9-portscan: 自研 TCP connect 端口扫描落地（无 npcap/libpcap，内网友好）——CIDR/IP段展开 + 68 常用端口（刻意覆盖弱口令字典服务）+ dnsx 式 worker-pool 并发；接入主编排，CIDR 不再 skip；本地靶标端到端实测发现 8080(web)/445(SMB)/902(VMware) 三类服务，nuclei 针对性扫出 22 findings；14 包回归全绿
 > - v0.1.10-gopocs: 弱口令爆破模块落地（高频子集+成熟库策略）——ssh/mysql/postgresql/redis/ftp 5 协议 Cracker（复用全家桶已有 client 库，仅新增 jlaffaye/ftp）；统一字典解析(user:pass + 纯密码)、端口→服务路由、per-endpoint 并发；接入端口扫描链路(开放服务端口→爆破)；真实 SSH server 端到端实测命中 root:root 入报告(High)；15 包回归全绿
 > - v0.1.11-recon: 外部测绘 API 落地（uncover→fofa/hunter/quake）——搜索语法目标接入主编排，测绘资产复用端口扫描下游(host:port→探测+爆破)，内网/互联网两套场景在此统一；`.env` 密钥管理(gitignored + `.env.example` 模板 + `config.LoadDotEnv`)；**端到端揪出 uncover v1.2.0 的 hunter bug**(io.ReadAll 提前读空 resp.Body→Decode 必 EOF→吐空 Result)，升级 v1.2.1 修复；真实 Hunter 实测 `ip="1.1.1.1"` 返回 36 条带真实 ip/host/port 资产；15 包回归全绿
+> - v0.1.12-fingerpoc: 指纹→POC 精准联动落地（复刻原版 dddd 灵魂）——新增 `internal/scanner/pocmap` 撮合引擎（mapping.yaml 956 产品→legacy POC，`Resolve` 复刻原版 GetPocs + General-Poc 通用集 + 文件存在校验/去重），pipeline 默认精准模式只对指纹命中产品发对应 POC（`-full` 切全量、`-no-general` 关通用集）；**端到端揪出既有 httpprobe bug**——httpx 未设 `ResponseInStdout` 致 `Result.ResponseBody`/`RawHeaders` 恒空、`body=`/`header=` 指纹全部失效、精准模式空转，修复后本地 Liferay 靶标实测指纹命中→nuclei 从 13000+ 精准缩到 12 POC；16 包回归全绿
+
+---
+
+## v0.1.12-fingerpoc — 指纹→POC 精准联动（指纹命中 → 只发该产品 POC）
+
+### 关键成果
+
+- **精准漏扫落地（原版 dddd 灵魂）**：指纹命中某产品后，nuclei 只跑该产品对应的 POC + 通用 POC，而非对每个目标无差别发全部 13000+ 模板。本地 Liferay 靶标实测：指纹命中 → 撮合 12 个 POC → nuclei 精准扫这 12 个（**13000+ → 12**）。
+- **端到端揪出既有 httpprobe bug**：精准模式首测指纹命中 0。排查发现 httpx 默认不填充 `Result.ResponseBody` / `RawHeaders`——它们仅在 `ResponseInStdout` 为真时才赋值（httpx `runner.go:2174`）。此前 `body=` 与 `header=` 指纹**全部失效**（占指纹库绝大多数），不止让本功能空转，整个指纹引擎实战形同虚设。修复：`httpprobe` 显式设 `ResponseInStdout: true`。
+- **数据资产复用**：撮合数据（`configs/pocs/mapping.yaml` 956 产品映射 + `legacy/*.yaml` 2405 个 POC）此前已迁移，本次只补「接线逻辑」。
+
+### 新增文件
+
+- **`internal/scanner/pocmap/pocmap.go`**：`Load` 用 yaml.v3 解析 mapping.yaml（分离 `General-Poc-*` 通用集、去重）；`Resolve` 复刻原版 `GetPocs`——按目标的指纹产品名查映射、拼 `legacy/<名>.yaml`、校验文件存在、去重，通用集按需加到每个目标；`Union` 取并集供一次性扫描。配套 `pocmap_test.go`（4 测：Load 分离去重 / Resolve 撮合+通用+缺失跳过+未知产品 / Union 去重）。
+
+### 修改文件
+
+- `internal/scanner/nuclei/scanner.go`：`Options` 加 `Templates []string`（具体 POC 文件路径）；`buildSDKOptions` 精准（文件列表）/ 全量（目录）二选一，均走 `WithTemplatesOrWorkflows`。
+- `internal/app/pipeline.go`：`probeAndFingerprint` 同时返回 `URL→产品名`；新增 `resolvePOCs`（加载映射→撮合→并集）；`runNuclei` 精准（默认）/ 全量（`-full`）双分支，无命中则跳过。
+- `internal/discovery/httpprobe/probe.go`：**修复** `ResponseInStdout: true`，让 httpx 填充 body/header 供指纹引擎匹配。
+- `internal/config/config.go` + `cmd/dddd/main.go`：`-full`（全量模板）/ `-no-general`（关通用集）两个 flag + help 的 Vulnerability scan 段；版本 `0.1.11-dev → 0.1.12-dev`。
+- `go.mod`：`gopkg.in/yaml.v3` indirect → direct。
+
+### 验证（单测 + 本地靶标端到端）
+
+**单测**：`pocmap` 4 测（解析分离去重、撮合+通用+缺失跳过+未知产品、并集去重）。
+
+**端到端**（本地 Liferay 特征靶标，**仅扫自建 server、不碰真实主机**）：
+- 修复 httpprobe 前：`fingerprint hits: 0` → 精准模式空转跳过。
+- 修复后：`fingerprint hits: 1`（Liferay）→ `poc mapping: 1 product hit -> 12 POC files` → `nuclei precise scan: 12 matched POC(s)`（**13000+ → 12**）。
+
+16 包回归全绿。
+
+### 注意 / 后续
+
+- 第一版用**并集**精准（所有目标命中 POC 的并集一次扫），未做严格 per-target；真正 per-target 需按 POC 集分组多次 Scan，列为后续优化。
+- mapping 的 `type`（root/base/dir）URL 层级第一版简化（指纹命中哪个 URL 就对该 URL 跑其 POC）。
+- 精准模式 POC 来自 `legacy` 本地文件，不联网；`-full` 走 `nuclei-templates`（需 `dddd update`）。
 
 ---
 

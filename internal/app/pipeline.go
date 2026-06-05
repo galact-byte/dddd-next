@@ -27,6 +27,7 @@ import (
 	"dddd-next/internal/reporter"
 	"dddd-next/internal/scanner/gopocs"
 	"dddd-next/internal/scanner/nuclei"
+	"dddd-next/internal/scanner/pocmap"
 	"dddd-next/internal/types"
 )
 
@@ -95,9 +96,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return nil
 	}
 
-	liveURLs := p.probeAndFingerprint(ctx, probeInputs)
+	liveURLs, fpHits := p.probeAndFingerprint(ctx, probeInputs)
 	if len(liveURLs) > 0 {
-		p.runNuclei(ctx, liveURLs)
+		p.runNuclei(ctx, liveURLs, fpHits)
 	}
 	return nil
 }
@@ -288,7 +289,9 @@ func (p *Pipeline) resolveDomains(ctx context.Context, domains []string) []strin
 	return live
 }
 
-func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) []string {
+// probeAndFingerprint returns the live URLs plus a map of URL → matched product
+// names, which the precise nuclei stage uses to pick each target's POCs.
+func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]string, map[string][]string) {
 	fmt.Printf("[*] HTTP probing %d target(s)...\n", len(inputs))
 	probe := httpprobe.New(httpprobe.Options{
 		Targets:    inputs,
@@ -298,11 +301,12 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) []s
 	ch, err := probe.Run(ctx)
 	if err != nil {
 		fmt.Printf("[!] httpx: %v\n", err)
-		return nil
+		return nil, nil
 	}
 
 	var live []string
-	hits := 0
+	hits := make(map[string][]string)
+	n := 0
 	for resp := range ch {
 		live = append(live, resp.URL)
 		_ = p.auditor.LogResponse(resp.URL, "http-probe", map[string]any{
@@ -313,25 +317,39 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) []s
 			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
 				fmt.Printf("[!] report: %v\n", werr)
 			}
-			hits++
+			hits[resp.URL] = append(hits[resp.URL], fp.Name)
+			n++
 		}
 	}
-	fmt.Printf("[*] live web: %d, fingerprint hits: %d\n", len(live), hits)
-	return live
+	fmt.Printf("[*] live web: %d, fingerprint hits: %d\n", len(live), n)
+	return live, hits
 }
 
-func (p *Pipeline) runNuclei(ctx context.Context, urls []string) {
-	tmplDir := filepath.Join(p.configDir, "nuclei-templates")
-	if info, err := os.Stat(tmplDir); err != nil || !info.IsDir() {
-		fmt.Printf("[!] nuclei templates not found at %s — run `dddd update` first; skipping vuln scan\n", tmplDir)
-		return
-	}
-
-	fmt.Printf("[*] nuclei scanning %d target(s)...\n", len(urls))
+// runNuclei scans the live URLs. Precise mode (default) loads only the POC
+// files the fingerprint hits map to; full mode (-full) runs the whole
+// nuclei-templates directory.
+func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[string][]string) {
 	opts := nuclei.DefaultOptions()
-	opts.TemplatesDir = tmplDir
 	if p.cfg.ProxyURL != "" {
 		opts.Proxy = []string{p.cfg.ProxyURL}
+	}
+
+	if p.cfg.FullScan {
+		tmplDir := filepath.Join(p.configDir, "nuclei-templates")
+		if info, err := os.Stat(tmplDir); err != nil || !info.IsDir() {
+			fmt.Printf("[!] nuclei templates not found at %s — run `dddd update` first; skipping vuln scan\n", tmplDir)
+			return
+		}
+		opts.TemplatesDir = tmplDir
+		fmt.Printf("[*] nuclei full scan: %d target(s) x all templates...\n", len(urls))
+	} else {
+		pocs := p.resolvePOCs(fpHits)
+		if len(pocs) == 0 {
+			fmt.Println("[*] nuclei precise: no fingerprint-matched POCs, skipping vuln scan")
+			return
+		}
+		opts.Templates = pocs
+		fmt.Printf("[*] nuclei precise scan: %d target(s) x %d matched POC(s)...\n", len(urls), len(pocs))
 	}
 
 	sc, err := nuclei.New(ctx, opts)
@@ -363,6 +381,25 @@ func (p *Pipeline) runNuclei(ctx context.Context, urls []string) {
 		}
 	}
 	fmt.Printf("[*] findings: %d\n", n)
+}
+
+// resolvePOCs maps the fingerprint hits to the deduplicated set of POC files to
+// run, via configs/pocs/mapping.yaml + legacy/. Returns nil (skip scan) when no
+// product matched or the mapping can't be loaded.
+func (p *Pipeline) resolvePOCs(fpHits map[string][]string) []string {
+	if len(fpHits) == 0 {
+		return nil
+	}
+	m, err := pocmap.Load(filepath.Join(p.configDir, "pocs", "mapping.yaml"))
+	if err != nil {
+		fmt.Printf("[!] pocmap: %v; skipping precise scan\n", err)
+		return nil
+	}
+	pocDir := filepath.Join(p.configDir, "pocs", "legacy")
+	resolved, stats := m.Resolve(fpHits, pocDir, !p.cfg.DisableGeneralPoc)
+	fmt.Printf("[*] poc mapping: %d product hit(s) -> %d POC file(s) across %d target(s)\n",
+		stats.MatchedNames, stats.UniquePOCs, stats.Targets)
+	return pocmap.Union(resolved)
 }
 
 func buildReporter(cfg config.Config) (reporter.Reporter, error) {
