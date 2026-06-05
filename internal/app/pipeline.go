@@ -1,10 +1,10 @@
 // Package app wires the discovery and scanning modules into one scan pipeline
 // driven by config.Config. It is the workflow layer the CLI calls.
 //
-// Stage flow (port scanning, weak-cred brute force and recon APIs land later):
+// Stage flow (weak-cred brute force and recon APIs land later):
 //
-//	targets -> classify -> [subdomain enum] -> DNS resolve -> HTTP probe
-//	        -> fingerprint -> nuclei -> report
+//	targets -> classify -> [CIDR/range port scan] -> [subdomain enum]
+//	        -> DNS resolve -> HTTP probe -> fingerprint -> nuclei -> report
 package app
 
 import (
@@ -19,6 +19,7 @@ import (
 	"dddd-next/internal/config"
 	"dddd-next/internal/discovery/dnsx"
 	"dddd-next/internal/discovery/httpprobe"
+	"dddd-next/internal/discovery/portscan"
 	"dddd-next/internal/discovery/subfinder"
 	"dddd-next/internal/fingerprint"
 	"dddd-next/internal/reporter"
@@ -63,8 +64,11 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
-	probeInputs, domains := p.parseTargets()
+	probeInputs, domains, portscanSpecs := p.parseTargets()
 
+	if len(portscanSpecs) > 0 {
+		probeInputs = append(probeInputs, p.scanPorts(ctx, portscanSpecs)...)
+	}
 	if p.cfg.Subdomain && len(domains) > 0 {
 		domains = p.enumerateSubdomains(ctx, domains)
 	}
@@ -100,11 +104,11 @@ func (p *Pipeline) Close() error {
 	return errors.Join(errs...)
 }
 
-// parseTargets classifies each -t value into a directly-probeable input or a
-// bare domain that needs enumeration/resolution first. Input kinds that need
-// the not-yet-built modules (CIDR/range -> port scan, search query -> recon
-// API) are reported and skipped rather than silently dropped.
-func (p *Pipeline) parseTargets() (probeInputs, domains []string) {
+// parseTargets classifies each -t value into a directly-probeable input, a bare
+// domain that needs enumeration/resolution first, or a CIDR/range that needs a
+// port scan. Search queries still need the not-yet-built recon API, so they're
+// reported and skipped rather than silently dropped.
+func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs []string) {
 	for _, raw := range p.cfg.Targets {
 		t, err := classifier.Parse(raw)
 		if err != nil {
@@ -119,14 +123,35 @@ func (p *Pipeline) parseTargets() (probeInputs, domains []string) {
 		case types.InputDomain:
 			domains = append(domains, t.Host)
 		case types.InputCIDR, types.InputIPRange:
-			fmt.Printf("[!] %q (%s): port scanning not implemented yet, skipped\n", raw, t.Type)
+			portscanSpecs = append(portscanSpecs, t.Raw)
 		case types.InputSearchQuery:
 			fmt.Printf("[!] %q: recon API (Fofa/Hunter/Quake) not implemented yet, skipped\n", raw)
 		default:
 			fmt.Printf("[!] %q: unrecognized input, skipped\n", raw)
 		}
 	}
-	return probeInputs, domains
+	return probeInputs, domains, portscanSpecs
+}
+
+// scanPorts expands CIDR/IP-range specs into hosts, TCP-connect scans the
+// common port set, and returns open "host:port" endpoints for the HTTP probe.
+// Connect scanning is direct (no proxy) so it still works on intranet targets.
+func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []string {
+	hosts, err := portscan.ExpandHosts(specs)
+	if err != nil {
+		fmt.Printf("[!] portscan: %v\n", err)
+		return nil
+	}
+	fmt.Printf("[*] port scanning %d host(s) x %d ports...\n", len(hosts), len(portscan.DefaultPorts))
+
+	sc := portscan.New(portscan.DefaultOptions())
+	var open []string
+	for r := range sc.Scan(ctx, hosts) {
+		open = append(open, fmt.Sprintf("%s:%d", r.Host, r.Port))
+		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
+	}
+	fmt.Printf("[*] open ports: %d\n", len(open))
+	return open
 }
 
 func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []string {

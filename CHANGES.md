@@ -11,6 +11,61 @@
 > - v0.1.6-subfinder-dnsx: 资产发现链路补全——subfinder v2.14.0（被动子域枚举，callback→channel）+ dnsx v1.2.3（DNS 解析，单次 + 并发批量）；无 `replace` 冲突；安全复审 616 依赖 0 攻击载荷；12 包回归全绿
 > - v0.1.7-pipeline: **主编排骨架落地**——`internal/app` 把 classifier/subfinder/dnsx/httpx/fingerprint/nuclei/reporter/audit 串成单一扫描工作流；CLI `-t` 扫描模式接入；nm 实测确认 `vulncheck/dotnet` 符号(174)如 Directive 预言入二进制（检测用途，webshell 类 0）；13 包回归全绿
 > - v0.1.8-nuclei-localdir: 端到端冒烟揪出并修复 nuclei bug——引擎用了系统全局（另一个 nuclei CLI 写的）模板目录而非本地 `configs/`，init 联网装模板触发 401 崩溃；改用 `SetTemplatesDir`（内存级）指向本地 + `DisableUpdateCheck` 跳过启动联网；本地靶标实测 13 findings 入报告，13 包回归全绿
+> - v0.1.9-portscan: 自研 TCP connect 端口扫描落地（无 npcap/libpcap，内网友好）——CIDR/IP段展开 + 68 常用端口（刻意覆盖弱口令字典服务）+ dnsx 式 worker-pool 并发；接入主编排，CIDR 不再 skip；本地靶标端到端实测发现 8080(web)/445(SMB)/902(VMware) 三类服务，nuclei 针对性扫出 22 findings；14 包回归全绿
+
+---
+
+## v0.1.9-portscan — 自研 TCP connect 端口扫描（CIDR/IP 段目标可扫）
+
+### 关键成果
+
+- **端口扫描模块落地**：`internal/discovery/portscan` 把原先「跳过」的 CIDR / IP 段目标变成可扫资产——展开成 IP → TCP connect 探测 → 开放 `host:port` 喂给下游 httpx/指纹/nuclei。
+- **选型自研 connect，不用 naabu**：connect 扫描无需 raw socket / npcap / libpcap，Windows 免特权、内网直连可用（dddd 实战常在内网）；规避 naabu 的 npcap 依赖坑（参照 nuclei 那次 `replace` 冲突教训）。属架构「全家桶」原则的一处务实例外。
+
+### 新增文件
+
+#### `internal/discovery/portscan/portscan.go` + 测试 — TCP connect 端口扫描
+
+- **`ExpandHosts`**：把 IP / CIDR / IP 段（`a.b.c.d-e.f.g.h`）展开成去重 IPv4 列表；IPv6 与非法输入显式报错（不静默跳过）；`maxExpand = 1<<20` 上限防超大 CIDR 撑爆内存。
+- **`Scanner.Scan`**：host×port 笛卡尔积，`net.Dialer.DialContext` 探测，只 emit 开放端口；并发用 `sem channel + WaitGroup`（照搬 `dnsx.ResolveMany` 范式，全项目一致）；ctx 取消即停。
+- **`DefaultPorts`（68 口）**：web 中间件 + 数据库/远程/文件共享，**刻意覆盖 `configs/dict` 弱口令字典对应服务**（ftp/ssh/mysql/mssql/oracle/postgresql/redis/rdp/smb/mongodb）——端口扫描发现服务 → 后续弱口令爆破，设计自洽。
+
+### 修改文件
+
+- `internal/app/pipeline.go`：`parseTargets` 增 `portscanSpecs` 返回值，CIDR/IPRange 从「打印跳过」改为收集；新增 `scanPorts` 阶段（展开→扫描→开放端口入 probeInputs），直连不走代理（内网友好）。
+- `cmd/dddd/main.go`：版本 `0.1.8-dev → 0.1.9-dev`。
+
+### 端到端验证（本地靶标，端口扫描真实价值）
+
+`-t 127.0.0.1/32`（CIDR 分支）跑通完整链路：
+
+`端口扫描 1 host×68 口 → open: 3 → httpx 3 → live web 1, 指纹命中 1 → nuclei → findings: 22`
+
+发现的 3 个开放端口全部被 nuclei 针对性扫描，证明不止 web：
+
+| 端口 | 服务 | nuclei findings |
+| :--- | :--- | :--- |
+| 8080 | Python http.server（靶子） | README 泄露 / Missing Headers×11 / Wappalyzer×2 / 目录列举 |
+| 445 | 本机 SMB | SMB2 时间 / 版本 / Enum Domains / capabilities / 枚举 / OS 探测（6） |
+| 902 | VMware Auth Daemon | VMware 认证守护进程探测 |
+
+- 报告产出：`result` 含 1 fingerprint + 22 finding
+- 完整回归 **14 包全绿**（新增 portscan 包）
+
+### 文件清单总览
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| **新增** | `internal/discovery/portscan/portscan.go` + `portscan_test.go` |
+| **修改** | `internal/app/pipeline.go`（CIDR/range → 端口扫描接入） |
+| **修改** | `internal/app/pipeline_test.go`（parseTargets 三返回值断言） |
+| **修改** | `cmd/dddd/main.go`（版本号） |
+
+### 测试方式
+
+1. 起本地服务（如 `python -m http.server 8080`）
+2. `dddd-next -t 127.0.0.1/32`（或任意 CIDR/IP 段）
+3. 期望：`port scanning ... → open ports: N → ...`，开放端口拼成 host:port 进入后续探测；`go test ./...` 14 包全绿
 
 ---
 
