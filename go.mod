@@ -11,6 +11,7 @@ require (
 	github.com/projectdiscovery/httpx v1.9.0
 	github.com/projectdiscovery/nuclei/v3 v3.8.0
 	github.com/projectdiscovery/subfinder/v2 v2.14.0
+	github.com/projectdiscovery/uncover v1.2.1
 	github.com/redis/go-redis/v9 v9.11.0
 	golang.org/x/crypto v0.49.0
 )
@@ -300,7 +301,6 @@ require (
 	github.com/projectdiscovery/retryablehttp-go v1.3.8 // indirect
 	github.com/projectdiscovery/sarif v0.0.1 // indirect
 	github.com/projectdiscovery/tlsx v1.2.2 // indirect
-	github.com/projectdiscovery/uncover v1.2.0 // indirect
 	github.com/projectdiscovery/useragent v0.0.107 // indirect
 	github.com/projectdiscovery/utils v0.10.1 // indirect
 	github.com/projectdiscovery/wappalyzergo v0.2.76 // indirect

@@ -13,6 +13,46 @@
 > - v0.1.8-nuclei-localdir: 端到端冒烟揪出并修复 nuclei bug——引擎用了系统全局（另一个 nuclei CLI 写的）模板目录而非本地 `configs/`，init 联网装模板触发 401 崩溃；改用 `SetTemplatesDir`（内存级）指向本地 + `DisableUpdateCheck` 跳过启动联网；本地靶标实测 13 findings 入报告，13 包回归全绿
 > - v0.1.9-portscan: 自研 TCP connect 端口扫描落地（无 npcap/libpcap，内网友好）——CIDR/IP段展开 + 68 常用端口（刻意覆盖弱口令字典服务）+ dnsx 式 worker-pool 并发；接入主编排，CIDR 不再 skip；本地靶标端到端实测发现 8080(web)/445(SMB)/902(VMware) 三类服务，nuclei 针对性扫出 22 findings；14 包回归全绿
 > - v0.1.10-gopocs: 弱口令爆破模块落地（高频子集+成熟库策略）——ssh/mysql/postgresql/redis/ftp 5 协议 Cracker（复用全家桶已有 client 库，仅新增 jlaffaye/ftp）；统一字典解析(user:pass + 纯密码)、端口→服务路由、per-endpoint 并发；接入端口扫描链路(开放服务端口→爆破)；真实 SSH server 端到端实测命中 root:root 入报告(High)；15 包回归全绿
+> - v0.1.11-recon: 外部测绘 API 落地（uncover→fofa/hunter/quake）——搜索语法目标接入主编排，测绘资产复用端口扫描下游(host:port→探测+爆破)，内网/互联网两套场景在此统一；`.env` 密钥管理(gitignored + `.env.example` 模板 + `config.LoadDotEnv`)；**端到端揪出 uncover v1.2.0 的 hunter bug**(io.ReadAll 提前读空 resp.Body→Decode 必 EOF→吐空 Result)，升级 v1.2.1 修复；真实 Hunter 实测 `ip="1.1.1.1"` 返回 36 条带真实 ip/host/port 资产；15 包回归全绿
+
+---
+
+## v0.1.11-recon — 外部测绘 API（搜索语法 → 互联网资产 → 复用扫描链路）
+
+### 关键成果
+
+- **测绘 API 落地**：`internal/discovery/uncover` 封装 projectdiscovery/uncover，`app="seeyon"` 这类搜索语法目标经 fofa/hunter/quake 解析为 `host:port` 资产，**复用端口扫描的同一下游**（→ HTTP 探测 + 弱口令爆破），内网/互联网两套发现路径在此汇合。
+- **端到端揪出上游 bug**：真实 Hunter 查询返回的资产字段全空——定位到 uncover v1.2.0 `hunter.go` 先 `io.ReadAll(resp.Body)` 把一次性 body 读空、紧接着 `json.NewDecoder(resp.Body).Decode` 必拿 EOF→走错误分支吐空 Result。**hunter 在 v1.2.0 完全不可用**；查上游确认 v1.2.1 已修（删掉 ReadAll）且公共 API（`New`/`Execute`）兼容，drop-in 升级。
+- **密钥管理**：`.env`（gitignored，绝不入库）+ `.env.example`（占位模板，入库自文档化）+ `config.LoadDotEnv`（标准库解析，已有环境变量优先于文件）；启动时由 `main` 加载到环境，uncover 自动读取。
+
+### 新增文件
+
+- **`internal/discovery/uncover/uncover.go`**：`Source.Query` 跑搜索表达式→`[]types.Asset`；无可用 key 时按引擎报错而非致命；`toAsset` 投影 `sources.Result`（ip/host/port/url）。
+- **`.env.example`**：测绘引擎密钥模板（fofa 需 email+key 两个、hunter、quake）。
+
+### 修改文件
+
+- `internal/app/pipeline.go`：新增 `recon` 阶段（搜索语法目标→uncover→去重 host:port→`portscan.Result`），与端口扫描汇入同一 `openPorts`，统一喂探测+爆破。
+- `internal/config/config.go`：新增 `LoadDotEnv`（KEY=VALUE 解析、注释/空行跳过、引号剥离、env 优先）。
+- `cmd/dddd/main.go`：启动加载 `.env`；help 的 `-t` 说明补全搜索语法 + 新增 Recon 段；版本 `0.1.10-dev → 0.1.11-dev`。
+- `.gitignore`：补 `.env.*` + `!.env.example`（密钥更严的网，保留模板）。
+- `go.mod`/`go.sum`：`uncover v1.2.0 → v1.2.1`。
+
+### 关于 FOFA（重要使用限制）
+
+- uncover 的 fofa 需 **`FOFA_EMAIL` + `FOFA_KEY` 两个**环境变量（`appendIfAllExists`，缺一不加载该引擎）。
+- **免费 FOFA 账号 API 额度为 0**（仅网页查询额度），而 uncover 走 API，故免费版 fofa recon 查不到结果——需开会员才有 API 额度。email+key 仍写入 `.env`，待额度可用即生效。
+- 实际可用：**Hunter**（500积分/天≈50次）、**Quake**（5次/月，极省着用）。
+
+### 验证（单测 + 真实 Hunter 端到端）
+
+**单测**：`config` 包新增 `LoadDotEnv` 3 测（解析+引号剥离、env 优先、缺文件不报错）；`uncover` 包 3 测（默认值填充、toAsset、空查询报错）。
+
+**真实端到端**（一次性程序，**仅 recon 阶段、只挂 Hunter 引擎**，刻意不触发对真实主机的主动扫描/爆破）：
+- 修复前：`ip="1.1.1.1"` → `assets returned: 1`，字段全空 `host= ip= port=0`
+- 升级 v1.2.1 后：返回 36 条带真实数据，如 `host=one.one.one.one ip=1.1.1.1 port=2053`、`port=443`
+
+15 包回归全绿。
 
 ---
 

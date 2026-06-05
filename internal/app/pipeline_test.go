@@ -37,8 +37,9 @@ func TestParseTargetsClassification(t *testing.T) {
 		"1.2.3.4:8080",       // IP:Port -> probe
 		"sub.example.com",    // domain -> enum/resolve
 		"192.168.0.0/24",     // CIDR -> port scan
+		`app="seeyon"`,       // search query -> recon
 	}}}
-	probeInputs, domains, portscanSpecs := p.parseTargets()
+	probeInputs, domains, portscanSpecs, searchQueries := p.parseTargets()
 
 	if len(domains) != 1 || domains[0] != "sub.example.com" {
 		t.Errorf("domains = %v, want [sub.example.com]", domains)
@@ -48,6 +49,9 @@ func TestParseTargetsClassification(t *testing.T) {
 	}
 	if len(portscanSpecs) != 1 || portscanSpecs[0] != "192.168.0.0/24" {
 		t.Errorf("portscanSpecs = %v, want [192.168.0.0/24]", portscanSpecs)
+	}
+	if len(searchQueries) != 1 {
+		t.Errorf("searchQueries = %v, want 1 entry", searchQueries)
 	}
 }
 

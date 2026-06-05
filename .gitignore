@@ -46,3 +46,8 @@ GEMINI.md
 AGENTS.md
 .omc/
 .claude/
+
+# API keys / local secrets — recon keys live in .env (already ignored above).
+# Widen the net but keep the committed .env.example template.
+.env.*
+!.env.example

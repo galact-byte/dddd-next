@@ -908,8 +908,8 @@ github.com/projectdiscovery/subfinder/v2 v2.14.0 h1:lTi9tNEqSPFOKcswh62MDVEV8yO5
 github.com/projectdiscovery/subfinder/v2 v2.14.0/go.mod h1:3XBFCLD/9R8KWK5zfu3u1Qau02shuCiQuCV3W2ClUmk=
 github.com/projectdiscovery/tlsx v1.2.2 h1:Y96QBqeD2anpzEtBl4kqNbwzXh2TrzJuXfgiBLvK+SE=
 github.com/projectdiscovery/tlsx v1.2.2/go.mod h1:ZJl9F1sSl0sdwE+lR0yuNHVX4Zx6tCSTqnNxnHCFZB4=
-github.com/projectdiscovery/uncover v1.2.0 h1:31tjYa0v8FB8Ch8hJTxb+2t63vsljdOo0OSFylJcX4M=
-github.com/projectdiscovery/uncover v1.2.0/go.mod h1:ozqKb++p39Kmh1SmwIpbQ9p0aVGPXuwsb4/X2Kvx6ms=
+github.com/projectdiscovery/uncover v1.2.1 h1:8U46T/96CLT7BPoXBgkTvWqB06lOyeTSLvh5+UjzATE=
+github.com/projectdiscovery/uncover v1.2.1/go.mod h1:0p8onrWxfpXQEYs90ZDzTSpu1107gWmodX1NWqu/+z4=
 github.com/projectdiscovery/useragent v0.0.107 h1:45gSBda052fv2Gtxtnpx7cu2rWtUpZEQRGAoYGP6F5M=
 github.com/projectdiscovery/useragent v0.0.107/go.mod h1:yv5ZZLDT/kq6P+NvBcCPq6sjEVQtZGgO+OvvHzZ+WtY=
 github.com/projectdiscovery/utils v0.10.1 h1:9luYfL7PpN1L/cLO4bAES4+ltDaEBKOUnRiTn920XfM=
