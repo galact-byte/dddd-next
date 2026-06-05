@@ -9,6 +9,68 @@
 > - v0.1.4-httpprobe: 首个 projectdiscovery 外部依赖落地——`httpx v1.9.0` 集成；channel-based API 取代原 dddd 的全局 Map+Mutex 模式；94 测试全绿
 > - v0.1.5-nuclei: **最重大引擎集成**——nuclei v3.8.0 public lib SDK 适配层（callback→channel 包装，`ResultEvent`→`Finding` 投影）；项目首个 `replace`（client-go 依赖冲突修复，非 vendored fork，属约定内例外）；`go test ./...` 10 包回归全绿
 > - v0.1.6-subfinder-dnsx: 资产发现链路补全——subfinder v2.14.0（被动子域枚举，callback→channel）+ dnsx v1.2.3（DNS 解析，单次 + 并发批量）；无 `replace` 冲突；安全复审 616 依赖 0 攻击载荷；12 包回归全绿
+> - v0.1.7-pipeline: **主编排骨架落地**——`internal/app` 把 classifier/subfinder/dnsx/httpx/fingerprint/nuclei/reporter/audit 串成单一扫描工作流；CLI `-t` 扫描模式接入；nm 实测确认 `vulncheck/dotnet` 符号(174)如 Directive 预言入二进制（检测用途，webshell 类 0）；13 包回归全绿
+
+---
+
+## v0.1.7-pipeline — 主编排骨架 + CLI 扫描模式（模块串成工作流）
+
+### 关键成果
+
+- **`internal/app` 编排层落地**：把已完成的 8 个模块串成单一扫描工作流——这是 dddd-next 从"一堆能跑的模块"变成"一个能扫的工具"的关键一跃。
+- **CLI 扫描模式接入**：`cmd/dddd` 从只有 `update/version/help`，到 `dddd -t <target>` 真正能发起扫描；版本号 `0.1.2-dev → 0.1.7-dev`。
+
+### 新增文件
+
+#### `internal/app/pipeline.go` + 测试 — 扫描编排层
+
+- **阶段流**：`targets → classify → [子域枚举] → DNS 解析 → 去重 → HTTP 探测 + 指纹 → nuclei → 报告`
+- `New(cfg, configDir)`：加载指纹库（`fingers/finger.yaml`）、按 `OutputType` 组装 reporter（text/json + 可选 HTML 的 `NewMulti`）、可选 audit
+- **诚实降级**（不静默丢弃）：CIDR/IP 段（端口扫描未实现）、搜索语法（测绘 API 未实现）→ 显式 `[!]` 提示跳过
+- **优雅缺失处理**：nuclei 模板目录不存在 → 提示先跑 `dddd update`，跳过漏扫而非崩溃
+- `Close()`：`errors.Join` 聚合关闭 reporter + auditor
+- 6 个测试（hostPort / dedup / parseTargets 分类分流 / buildReporter text / buildReporter json+html / New 缺指纹库须报错）
+
+#### `cmd/dddd/main.go` — 接入 scan 模式
+
+- `runScan`：`ParseArgs → Validate → app.New → Run`，退出码语义明确（参数错=2 / 运行错=1 / 成功=0）
+- help 补全全部 scan flags（`-t/-tf/-o/-ot/-ho/-a/-sd/-proxy/-log-level`）
+
+### 安全验证：Directive 兑现时刻（vulncheck 符号入二进制）
+
+v0.1.5 commit 立的 Directive：**"接入 main 后重跑 `go tool nm` 验证 vulncheck"**。本次 `main → app → nuclei → dsl → vulncheck/dotnet` 真正链接，如约执行：
+
+| 检查 | v0.1.4（httpx） | v0.1.7（接入 main 后） |
+| :--- | :--- | :--- |
+| 二进制总符号 | — | 119,247 |
+| `vulncheck` 符号 | **0**（DCE 消除） | **174**（全是 `go-exploit/dotnet.*`） |
+| `webshell`/`bindshell`/`reverse` | 0 | **0**（最危险载荷未链入） |
+
+- **如预言兑现**：v0.1.5 已预告"接入 main 后 nm 会出现 vulncheck 符号"，今实测 174，与预测一致。
+- **性质**：`.NET` 反序列化 gadget 生成（检测用途），非 webshell 植入；来源 projectdiscovery 官方库 dsl。
+- **决策（主人已拍板接受）**：成品 `dddd-next.exe` 含此类符号，火绒**可能**对二进制报毒——属预期，非异常。火绒隔离原则不变（绝不加白名单）。详见 `docs/DEV_NOTES.md`。
+
+### 测试与验证
+
+- `internal/app`：6 测试全绿
+- `go test ./...`：**13 个包回归全绿**（新增 internal/app）；`go vet ./internal/app` 零问题
+- 二进制构建成功（147M），CLI 冒烟：`version → 0.1.7-dev`、`help` 完整、缺 target → 退出码 **2**
+
+### 文件清单总览
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| **新增** | `internal/app/pipeline.go` |
+| **新增** | `internal/app/pipeline_test.go` |
+| **修改** | `cmd/dddd/main.go`（接入 `-t` scan 模式 + 版本号 0.1.7-dev） |
+
+### 测试方式
+
+1. `cd D:/Software/VsCode/Program/DDDD/dddd-next`
+2. 设缓存路径：`GOPATH=D:/Tools/Go/Cache/goPath`、`GOMODCACHE=D:/Tools/Go/Cache/goCache`
+3. `go test ./internal/app/` → 期望 6 测试全 PASS
+4. `go test ./...` → 期望 13 包 ok，exit 0
+5. 构建后冒烟：`./dddd-next.exe version`（应输出 0.1.7-dev）、`./dddd-next.exe`（无 target 应退出码 2 并提示）
 
 ---
 
