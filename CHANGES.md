@@ -8,6 +8,59 @@
 > - v0.1.3-update: updater 子命令上线，nuclei-templates 真实拉取成功（13084 模板，原版仅 2406，**多 5.4 倍**）；fingerprint Engine 完整闭环
 > - v0.1.4-httpprobe: 首个 projectdiscovery 外部依赖落地——`httpx v1.9.0` 集成；channel-based API 取代原 dddd 的全局 Map+Mutex 模式；94 测试全绿
 > - v0.1.5-nuclei: **最重大引擎集成**——nuclei v3.8.0 public lib SDK 适配层（callback→channel 包装，`ResultEvent`→`Finding` 投影）；项目首个 `replace`（client-go 依赖冲突修复，非 vendored fork，属约定内例外）；`go test ./...` 10 包回归全绿
+> - v0.1.6-subfinder-dnsx: 资产发现链路补全——subfinder v2.14.0（被动子域枚举，callback→channel）+ dnsx v1.2.3（DNS 解析，单次 + 并发批量）；无 `replace` 冲突；安全复审 616 依赖 0 攻击载荷；12 包回归全绿
+
+---
+
+## v0.1.6-subfinder-dnsx — 资产发现链路补全（子域枚举 + DNS 解析）
+
+### 关键成果
+
+- 补全"域名→子域→IP"前置链路：subfinder（被动子域枚举）+ dnsx（DNS 解析），与已有 httpx 串成完整资产发现流 `域名 → subfinder → dnsx → httpx → 指纹 → nuclei`
+- **无 `replace` 冲突**：subfinder/dnsx 走主线版本干净落地，`go mod tidy` 直接通过（不像 nuclei 需要 client-go replace）
+
+### 新增文件
+
+#### `internal/discovery/subfinder/subfinder.go` + 测试 — 被动子域枚举
+
+- 照 httpprobe 范式：`runner.Options.ResultCallback`（并发回调）→ channel，`Output` 设 `io.Discard`，`DisableUpdateCheck=true`
+- errCh 双通道（对齐 nuclei）——因 `EnumerateMultipleDomainsWithCtx` 返回 error，不吞
+- 投影 `resolve.HostEntry` → `Result{Host, Domain, Source}`，调用方不 import subfinder 包
+- 5 个测试
+
+#### `internal/discovery/dnsx/dnsx.go` + 测试 — DNS 解析
+
+- 包名 `dnsx` + 上游 alias `dnsxlib`（对齐 nuclei/nucleilib 惯例）
+- `New`（不连网，仅配置 client）/ `Resolve`（单次，薄封装 Lookup）/ `ResolveMany`（worker-pool 并发；失败不丢 host，写入 `Result.Err`，区分"解析为空"和"未尝试"）
+- 6 个测试
+
+### 安全复审（遵守 v0.1.5 commit 立的 Directive）
+
+- `go list -deps subfinder+dnsx`：**616 个传递依赖包，vulncheck/go-exploit 匹配 0**
+- 与 nuclei 不同：subfinder/dnsx 不依赖 `projectdiscovery/dsl`，无攻击载荷链入——本次属"无变化"的干净结果
+
+### 测试与验证
+
+- subfinder 5 + dnsx 6 测试全绿
+- `go test ./...`：**12 个包回归全绿**（新增 discovery/subfinder、discovery/dnsx）
+
+### 文件清单总览
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| **新增** | `internal/discovery/subfinder/subfinder.go` |
+| **新增** | `internal/discovery/subfinder/subfinder_test.go` |
+| **新增** | `internal/discovery/dnsx/dnsx.go` |
+| **新增** | `internal/discovery/dnsx/dnsx_test.go` |
+| **修改** | `go.mod`（+subfinder/v2 v2.14.0、dnsx v1.2.3 转 direct） |
+| **修改** | `go.sum` |
+
+### 测试方式
+
+1. `cd D:/Software/VsCode/Program/DDDD/dddd-next`
+2. 设缓存路径：`GOPATH=D:/Tools/Go/Cache/goPath`、`GOMODCACHE=D:/Tools/Go/Cache/goCache`
+3. `go test ./internal/discovery/subfinder/ ./internal/discovery/dnsx/` → 期望 11 测试全 PASS
+4. `go test ./...` → 期望 12 包 ok，exit 0
 
 ---
 
