@@ -1,11 +1,11 @@
 // Package app wires the discovery and scanning modules into one scan pipeline
 // driven by config.Config. It is the workflow layer the CLI calls.
 //
-// Stage flow (recon APIs land later):
+// Stage flow:
 //
-//	targets -> classify -> [CIDR/range port scan -> brute force]
-//	        -> [subdomain enum] -> DNS resolve -> HTTP probe -> fingerprint
-//	        -> nuclei -> report
+//	targets -> classify -> [CIDR/range port scan | search-query recon]
+//	        -> brute force -> [subdomain enum] -> DNS resolve -> HTTP probe
+//	        -> fingerprint -> nuclei -> report
 package app
 
 import (
@@ -22,6 +22,7 @@ import (
 	"dddd-next/internal/discovery/httpprobe"
 	"dddd-next/internal/discovery/portscan"
 	"dddd-next/internal/discovery/subfinder"
+	"dddd-next/internal/discovery/uncover"
 	"dddd-next/internal/fingerprint"
 	"dddd-next/internal/reporter"
 	"dddd-next/internal/scanner/gopocs"
@@ -66,10 +67,16 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
-	probeInputs, domains, portscanSpecs := p.parseTargets()
+	probeInputs, domains, portscanSpecs, searchQueries := p.parseTargets()
 
+	var openPorts []portscan.Result
 	if len(portscanSpecs) > 0 {
-		openPorts := p.scanPorts(ctx, portscanSpecs)
+		openPorts = append(openPorts, p.scanPorts(ctx, portscanSpecs)...)
+	}
+	if len(searchQueries) > 0 {
+		openPorts = append(openPorts, p.recon(ctx, searchQueries)...)
+	}
+	if len(openPorts) > 0 {
 		for _, r := range openPorts {
 			probeInputs = append(probeInputs, fmt.Sprintf("%s:%d", r.Host, r.Port))
 		}
@@ -111,10 +118,9 @@ func (p *Pipeline) Close() error {
 }
 
 // parseTargets classifies each -t value into a directly-probeable input, a bare
-// domain that needs enumeration/resolution first, or a CIDR/range that needs a
-// port scan. Search queries still need the not-yet-built recon API, so they're
-// reported and skipped rather than silently dropped.
-func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs []string) {
+// domain that needs enumeration/resolution first, a CIDR/range that needs a
+// port scan, or a search query that needs the recon engines.
+func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQueries []string) {
 	for _, raw := range p.cfg.Targets {
 		t, err := classifier.Parse(raw)
 		if err != nil {
@@ -131,12 +137,12 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs []string)
 		case types.InputCIDR, types.InputIPRange:
 			portscanSpecs = append(portscanSpecs, t.Raw)
 		case types.InputSearchQuery:
-			fmt.Printf("[!] %q: recon API (Fofa/Hunter/Quake) not implemented yet, skipped\n", raw)
+			searchQueries = append(searchQueries, t.Raw)
 		default:
 			fmt.Printf("[!] %q: unrecognized input, skipped\n", raw)
 		}
 	}
-	return probeInputs, domains, portscanSpecs
+	return probeInputs, domains, portscanSpecs, searchQueries
 }
 
 // scanPorts expands CIDR/IP-range specs into hosts and TCP-connect scans the
@@ -185,6 +191,45 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result) 
 		n++
 	}
 	fmt.Printf("[*] weak credentials: %d\n", n)
+}
+
+// recon resolves search-query targets through the uncover engines (fofa/hunter/
+// quake) into open host:port assets, feeding the same downstream path as the
+// port scanner. It needs internet egress and API keys (env vars); a missing-key
+// error is reported per query, not fatal.
+func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Result {
+	fmt.Printf("[*] recon: %d search query(ies) via fofa/hunter/quake...\n", len(queries))
+	opts := uncover.DefaultOptions()
+	opts.Proxy = p.cfg.ProxyURL
+	src := uncover.New(opts)
+
+	seen := make(map[string]struct{})
+	var results []portscan.Result
+	for _, q := range queries {
+		assets, err := src.Query(ctx, q, 0)
+		if err != nil {
+			fmt.Printf("[!] recon %q: %v\n", q, err)
+			continue
+		}
+		for _, a := range assets {
+			host := a.Host
+			if host == "" {
+				host = a.IP
+			}
+			if host == "" || a.Port == 0 {
+				continue
+			}
+			key := fmt.Sprintf("%s:%d", host, a.Port)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			results = append(results, portscan.Result{Host: host, Port: a.Port})
+			_ = p.auditor.LogInfo("recon", map[string]any{"source": a.Source, "host": host, "port": a.Port, "url": a.URL})
+		}
+	}
+	fmt.Printf("[*] recon assets: %d\n", len(results))
+	return results
 }
 
 func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []string {

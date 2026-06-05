@@ -92,3 +92,49 @@ func TestValidateBadLogLevel(t *testing.T) {
 		t.Error("expected validation error for invalid log level")
 	}
 }
+
+func TestLoadDotEnvParses(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	content := "# comment\n\nDDDD_DOTENV_A=hello\nDDDD_DOTENV_B=\"quoted value\"\nDDDD_DOTENV_C =  spaced \n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, k := range []string{"DDDD_DOTENV_A", "DDDD_DOTENV_B", "DDDD_DOTENV_C"} {
+		os.Unsetenv(k)
+		defer os.Unsetenv(k)
+	}
+	if err := LoadDotEnv(path); err != nil {
+		t.Fatalf("LoadDotEnv: %v", err)
+	}
+	if v := os.Getenv("DDDD_DOTENV_A"); v != "hello" {
+		t.Errorf("A = %q, want hello", v)
+	}
+	if v := os.Getenv("DDDD_DOTENV_B"); v != "quoted value" {
+		t.Errorf("B = %q, want 'quoted value'", v)
+	}
+	if v := os.Getenv("DDDD_DOTENV_C"); v != "spaced" {
+		t.Errorf("C = %q, want spaced", v)
+	}
+}
+
+func TestLoadDotEnvEnvWins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("DDDD_DOTENV_WIN=fromfile\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("DDDD_DOTENV_WIN", "fromenv")
+	if err := LoadDotEnv(path); err != nil {
+		t.Fatalf("LoadDotEnv: %v", err)
+	}
+	if v := os.Getenv("DDDD_DOTENV_WIN"); v != "fromenv" {
+		t.Errorf("explicit env must win: got %q, want fromenv", v)
+	}
+}
+
+func TestLoadDotEnvMissingFileOK(t *testing.T) {
+	if err := LoadDotEnv(filepath.Join(t.TempDir(), "nope.env")); err != nil {
+		t.Errorf("missing file should be a no-op, got %v", err)
+	}
+}

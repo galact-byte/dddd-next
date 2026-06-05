@@ -20,10 +20,12 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.10-dev"
+	appVersion = "0.1.11-dev"
 )
 
 func main() {
+	loadDotEnv()
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "version", "-v", "--version":
@@ -78,7 +80,7 @@ Usage:
   dddd <subcommand>
 
 Scan flags:
-  -t <target>     target (repeatable): IP / IP:Port / Domain / URL
+  -t <target>     target (repeatable): IP / CIDR / Range / IP:Port / Domain / URL / search query
   -tf <file>      targets file, one per line
   -o <file>       result output file (default result.txt)
   -ot <text|json> output format (default text)
@@ -97,6 +99,11 @@ Proxy:
   git and scanners inherit HTTP_PROXY / HTTPS_PROXY from the environment.
   Windows CMD:        set HTTPS_PROXY=http://127.0.0.1:7890
   Windows PowerShell: $env:HTTPS_PROXY="http://127.0.0.1:7890"
+
+Recon (search-query targets):
+  Queries like -t 'app="seeyon"' hit fofa/hunter/quake. Put API keys in a
+  .env file next to the binary (copy .env.example): FOFA_EMAIL + FOFA_KEY,
+  HUNTER_API_KEY, QUAKE_TOKEN. Free FOFA accounts have no API quota.
 
 Inspired by SleepingBag945/dddd (MIT License).
 `, appName, appVersion)
@@ -143,4 +150,14 @@ func resolveConfigDir() string {
 		}
 	}
 	return "configs"
+}
+
+// loadDotEnv pulls local secrets (recon API keys) from a .env file next to the
+// working dir or the binary into the environment, where uncover reads them.
+// Both lookups are best-effort: .env is optional and gitignored.
+func loadDotEnv() {
+	_ = config.LoadDotEnv(".env")
+	if exe, err := os.Executable(); err == nil {
+		_ = config.LoadDotEnv(filepath.Join(filepath.Dir(exe), ".env"))
+	}
 }

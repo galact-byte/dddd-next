@@ -148,3 +148,40 @@ func readLines(path string) ([]string, error) {
 	}
 	return out, scanner.Err()
 }
+
+// LoadDotEnv reads KEY=VALUE lines from a .env file and exports any key not
+// already set in the environment, so an explicit shell `export` always wins.
+// A missing file is not an error: .env is optional and only carries local
+// secrets (recon API keys) that must never be committed.
+func LoadDotEnv(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		_ = os.Setenv(key, val)
+	}
+	return scanner.Err()
+}
