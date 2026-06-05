@@ -1,13 +1,9 @@
 // Package main is the dddd-next CLI entry point.
 //
-// Subcommands implemented so far:
-//
-//	dddd update     pull latest nuclei-templates and other POC sources
-//	dddd version    print version
-//	dddd help       short usage
-//
-// Scan mode (the default `-t <target>` invocation) is wired up in a later
-// commit once the discovery / scanner modules land.
+//	dddd -t <target> [flags]   scan mode (default)
+//	dddd update                pull latest nuclei-templates and POC sources
+//	dddd version               print version
+//	dddd help                  usage
 package main
 
 import (
@@ -17,12 +13,14 @@ import (
 	"os/signal"
 	"path/filepath"
 
+	"dddd-next/internal/app"
+	"dddd-next/internal/config"
 	"dddd-next/internal/updater"
 )
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.2-dev"
+	appVersion = "0.1.7-dev"
 )
 
 func main() {
@@ -38,18 +36,57 @@ func main() {
 			os.Exit(runUpdate(os.Args[2:]))
 		}
 	}
+	os.Exit(runScan(os.Args))
+}
 
-	fmt.Printf("%s %s — scan mode is not wired up yet.\n", appName, appVersion)
-	fmt.Println("Available subcommands: update, version, help")
-	fmt.Println("Run `dddd help` for details.")
+func runScan(args []string) int {
+	cfg, err := config.ParseArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Run `dddd help` for usage.")
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	pipeline, err := app.New(cfg, resolveConfigDir())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer pipeline.Close()
+
+	fmt.Printf("%s %s — scanning %d target(s)\n", appName, appVersion, len(cfg.Targets))
+	if err := pipeline.Run(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("[*] done. results -> %s\n", cfg.Output)
+	return 0
 }
 
 func printHelp() {
 	fmt.Printf(`%s %s — automated asset surveying and vulnerability scanning.
 
 Usage:
-  dddd <subcommand> [flags]
-  dddd -t <target> [flags]              (scan mode — coming soon)
+  dddd -t <target> [flags]              scan mode
+  dddd <subcommand>
+
+Scan flags:
+  -t <target>     target (repeatable): IP / IP:Port / Domain / URL
+  -tf <file>      targets file, one per line
+  -o <file>       result output file (default result.txt)
+  -ot <text|json> output format (default text)
+  -ho <file>      HTML report file (empty disables)
+  -a              enable audit log (audit.log)
+  -sd             enumerate subdomains for domain targets
+  -proxy <url>    HTTP/SOCKS5 proxy for outgoing requests
+  -log-level      debug | info | warn | error
 
 Subcommands:
   update          Pull the latest nuclei-templates and POC sources via git
@@ -57,18 +94,15 @@ Subcommands:
   help            Show this help
 
 Proxy:
-  git inherits HTTP_PROXY / HTTPS_PROXY from the environment.
+  git and scanners inherit HTTP_PROXY / HTTPS_PROXY from the environment.
   Windows CMD:        set HTTPS_PROXY=http://127.0.0.1:7890
   Windows PowerShell: $env:HTTPS_PROXY="http://127.0.0.1:7890"
-  Linux / macOS:      export HTTPS_PROXY=http://127.0.0.1:7890
 
-Project: https://github.com/galact-byte (private, local-only for now)
 Inspired by SleepingBag945/dddd (MIT License).
 `, appName, appVersion)
 }
 
 func runUpdate(args []string) int {
-	// Catch Ctrl-C so a clone-in-progress can be interrupted cleanly.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
