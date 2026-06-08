@@ -20,6 +20,41 @@
 > - v0.1.15-servicedetect: 缺口③端口服务指纹落地（原版 gonmap 的现代替代）——新增 `internal/discovery/servicedetect` 包装 praetorian fingerprintx（slow lane 识别**非标准端口**的服务，ssh@2222/redis@16379），覆盖 ssh/http/mysql/mssql/oracle/postgresql/redis/smb/rdp/telnet 等几十种；gopocs.Endpoint 加 Service 字段、routableJobs 改为"识别服务优先、端口号 fallback"，非标准端口也能爆破；pipeline 端口扫描后插服务识别喂下游；0 新增依赖（fingerprintx 复用 nuclei 全家桶，tidy 转 direct）；本地 httptest 随机端口实测识别 http；17 包回归全绿
 > - v0.1.16-gopocs-smb: gopocs 8→9，补 SMB 弱口令（go-smb2 NTLMv2，识别 STATUS_LOGON_FAILURE 等拒绝码，区分认证失败↔SMB1协商失败）——内网横向第一目标；端口 445 已在扫描覆盖、smb.txt 字典现成；0 新增依赖（go-smb2 复用 nuclei 全家桶，tidy 转 direct）；gopocs 10 测全绿，17 包回归全绿
 > - v0.1.17-ms17010: 永恒之蓝 MS17-010 探测落地——gopocs 新增"探测型 POC"框架(probes map，无 cred 单次探测，与弱口令 crackers 并行)；手写 SMB1 四步握手(negotiate→session→tree→trans)，解密原版 AES 藏的请求包保证字节一致，判断 0xC0000205 命中报 Critical；用 copy 修正原版全局 patch 的并发 race；nuclei 无此模板的真缺口、内网必备；SMB(445) 端点经 gopocs 自动触发；gopocs 11 测全绿，17 包回归全绿
+> - v0.1.18-unauth: gopocs 补 3 类未授权/RCE 探测——复用探测型 POC 框架(probes)：memcached(stats→STAT,High)、adb(CNXN 握手→安卓调试桥 RCE 等价,Critical)、jdwp(JDWP-Handshake 回显→Java 调试 RCE,Critical)；端口 5555(adb) 补入扫描默认集、jdwp 靠 fingerprintx 识别路由；均为 nuclei 不覆盖的网络层未授权；原版 17 gopocs 协议已覆盖 13(缺 rdp/telnet/NetBIOS，shiro 由 nuclei 覆盖)；gopocs 12 测全绿，17 包回归全绿
+
+---
+
+## v0.1.18-unauth — gopocs 补 memcached/adb/jdwp 未授权探测
+
+### 关键成果
+
+- **3 类未授权 / RCE 探测**（复用 v0.1.17 探测型 POC 框架 `probes`）：
+  - **memcached**（11211）：`stats` 命令返回 `STAT` 即未授权（High）
+  - **adb**（5555）：ADB CNXN 握手包，设备回 `CNXN` 即未授权安卓调试桥（Critical，RCE 等价）
+  - **jdwp**（端口不定）：`JDWP-Handshake` 回显即未授权 Java 调试（Critical，RCE 等价）
+- **路由**：memcached(11211 已在扫描)/adb(5555 补入 DefaultPorts) 靠端口号；jdwp 端口不固定，靠 servicedetect 的 fingerprintx jdwp 插件识别路由。
+- 这些都是 nuclei 不覆盖的网络协议层未授权访问，内网实战高价值。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/unauth.go`**：`probeMemcached` / `probeADB`（含 CNXN 握手包）/ `probeJDWP`，均为无 cred 探测型 POC。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`probes` 注册 memcached/adb/jdwp；`defaultServicePorts` 加 5555→adb、11211→memcached。
+- `internal/scanner/gopocs/gopocs_test.go`：新增未授权端口路由测试。
+- `internal/discovery/portscan/portscan.go`：`DefaultPorts` 加 5555（adb）。
+- `cmd/dddd/main.go`：版本 `0.1.17-dev → 0.1.18-dev`。
+- `README.md`：能力加 3 类未授权探测，Roadmap 更新。
+
+### 验证
+
+- gopocs 12 测全绿（含未授权端口路由）；`go build` + `go test ./...` 17 包回归全绿。
+- 真实未授权服务端到端未做（无靶机）；探测逻辑移植自原版（adb CNXN 包字节、jdwp 握手序列一致）。
+
+### gopocs 覆盖（原版 17 协议已覆盖 13）
+
+弱口令 9：ssh/ftp/mysql/postgresql/redis/mssql/oracle/mongodb/smb。探测型 4：ms17010/memcached/adb/jdwp。仍缺：rdp/telnet 弱口令、NetBIOS（shiro 由 nuclei 覆盖）。
 
 ---
 
