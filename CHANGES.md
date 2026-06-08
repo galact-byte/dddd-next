@@ -23,6 +23,46 @@
 > - v0.1.18-unauth: gopocs 补 3 类未授权/RCE 探测——复用探测型 POC 框架(probes)：memcached(stats→STAT,High)、adb(CNXN 握手→安卓调试桥 RCE 等价,Critical)、jdwp(JDWP-Handshake 回显→Java 调试 RCE,Critical)；端口 5555(adb) 补入扫描默认集、jdwp 靠 fingerprintx 识别路由；均为 nuclei 不覆盖的网络层未授权；原版 17 gopocs 协议已覆盖 13(缺 rdp/telnet/NetBIOS，shiro 由 nuclei 覆盖)；gopocs 12 测全绿，17 包回归全绿
 > - v0.1.19-rdp: gopocs 弱口令 9→10，补 RDP（远程桌面 3389 内网高价值）——引入 grdp(replace 到 shadow1ng/grdp v1.0.3，fscan 同款 fork)，NTLMv2 over tpkt/x224/t125/sec/pdu 协议栈；用 sync.Once+channel 替代原版 WaitGroup+breakFlag(无 race)+ctx/超时保护；**首次新增第三方依赖(主人确认，RDP 旧工具能发现的不漏)**；端口 3389 已在扫描覆盖、rdp.txt 现成；原版 17 协议已覆盖 14；gopocs 13 测全绿，17 包回归全绿
 > - v0.1.20-telnet: gopocs 协议覆盖 14→15，补 telnet（弱口令爆破 + 未授权访问探测）——移植原版 telnetlib 协议栈为子包(精简掉几十个未用 option 常量)，`probeTelnet` 报未授权直进 shell(Critical)、`telnetCracker` 按 MakeServerType 判定的"仅密码/用户名+密码"两种模式爆破；**对原版的改进**：原版 `LastResponse` 跨 goroutine 无锁读写(数据竞争)，补 mutex 修掉；banner 读取的固定 3s/5s sleep 刻意不被 timeout 截断(否则慢速 banner 漏报)；端口 23 已在扫描覆盖、telnet.txt 现成；0 新增依赖；telnetlib 检测大脑(MakeServerType/isLoginFailed)单测全绿，gopocs 14 测全绿，18 包回归全绿
+> - v0.1.21-icmp: 缺口④ ICMP 存活探测落地——新增 `internal/discovery/hostalive`，`-ping` flag 开启后对 CIDR/IP段先 ICMP 预筛、只扫存活主机(大网段提速)；**默认关闭**(遵循"不能漏"：封 ICMP 但开端口的加固主机不能因预筛被丢)；两级策略 raw ICMP 监听(0 新增依赖，x/net/icmp 转 direct)→系统 ping 命令(无特权兜底)；**修原版 3 个隐患**：Windows `ping -w 1`(1ms 超时几乎必漏)→`-w 1000`、用 stdout 含 `ttl=` 判定(替代 Windows 不可靠退出码+原版 /bin/bash shell 技巧)、Windows 用 System32\ping.exe 绝对路径(规避 PATH 里 python ping.py 劫持，实测揪出)；loopback 端到端实测预筛生效；19 包回归全绿
+
+---
+
+## v0.1.21-icmp — ICMP 存活探测（缺口④）
+
+### 关键成果
+
+- **`-ping` 存活预筛**：开启后，对 CIDR / IP 段目标先做 ICMP 存活探测，只对响应的主机做端口扫描——大网段（如 /16）可大幅提速。
+- **默认关闭（遵循"不能漏"铁律）**：很多加固主机 / 防火墙后的目标会丢弃 ICMP 却仍开放端口，若默认用 ICMP 预筛会**静默漏掉**这些主机。因此存活预筛是显式 opt-in，默认全扫不漏。
+- **0 新增依赖**：`golang.org/x/net/icmp` 本就是依赖树中的 indirect 依赖，本次转 direct。
+
+### 两级探测策略
+
+1. **raw ICMP 监听**（快）：单 socket 批量收发 echo 请求，需 `CAP_NET_RAW` / 管理员权限。
+2. **系统 ping 命令**（兜底）：无特权、内网必可用。raw socket 打不开时自动降级。
+
+### 对原版的 3 处修正
+
+- **Windows 超时**：原版 `ping -w 1`（`-w` 在 Windows 是**毫秒**，1ms 几乎必然漏报）→ 改 `-w 1000`（1 秒）。
+- **成功判定**：改用 stdout 含 `ttl=`（不分大小写）判定回包——比 Windows 不可靠的退出码（路由器回 "unreachable" 也可能 exit 0）和原版的 `/bin/bash && echo true` shell 技巧更稳、更跨平台。
+- **ping 路径劫持**（实测揪出）：Windows 用 `%SystemRoot%\System32\ping.exe` 绝对路径，规避 PATH 中靠前的 `python/Scripts/ping.py`（实测劫持导致 `%1 is not a valid Win32 application`）或被植入的恶意 ping.exe。
+
+### 新增文件
+
+- **`internal/discovery/hostalive/hostalive.go`**：`CheckLive`（两级策略调度）+ raw ICMP echo（含 checksum/identifier/sequence 包构造）+ 跨平台 ping 命令。
+- **`internal/discovery/hostalive/hostalive_test.go`**：loopback 端到端、checksum 不变量、identifier 边界、空输入。
+
+### 修改文件
+
+- `internal/config/config.go`：Config 加 `PingFirst` 字段、注册 `-ping` flag。
+- `internal/app/pipeline.go`：`scanPorts` 在展开主机后、扫描前插入 ICMP 预筛（仅当 `-ping`）。
+- `cmd/dddd/main.go`：版本 `0.1.20-dev → 0.1.21-dev`。
+- `go.mod`：`golang.org/x/net` indirect → direct。
+- `README.md`：已实现能力加 ICMP 存活探测，Roadmap 移除该项。
+
+### 验证
+
+- hostalive 4 测全绿（含真实 loopback ping 0.12s）；`go build` + `go test ./...` 19 包回归全绿。
+- `dddd-next -t 127.0.0.1/32 -ping` 端到端实测：`ICMP liveness: 1/1 host(s) responded` → 仅对存活主机端口扫描，预筛接线生效。
 
 ---
 
