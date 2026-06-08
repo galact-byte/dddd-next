@@ -24,6 +24,36 @@
 > - v0.1.19-rdp: gopocs 弱口令 9→10，补 RDP（远程桌面 3389 内网高价值）——引入 grdp(replace 到 shadow1ng/grdp v1.0.3，fscan 同款 fork)，NTLMv2 over tpkt/x224/t125/sec/pdu 协议栈；用 sync.Once+channel 替代原版 WaitGroup+breakFlag(无 race)+ctx/超时保护；**首次新增第三方依赖(主人确认，RDP 旧工具能发现的不漏)**；端口 3389 已在扫描覆盖、rdp.txt 现成；原版 17 协议已覆盖 14；gopocs 13 测全绿，17 包回归全绿
 > - v0.1.20-telnet: gopocs 协议覆盖 14→15，补 telnet（弱口令爆破 + 未授权访问探测）——移植原版 telnetlib 协议栈为子包(精简掉几十个未用 option 常量)，`probeTelnet` 报未授权直进 shell(Critical)、`telnetCracker` 按 MakeServerType 判定的"仅密码/用户名+密码"两种模式爆破；**对原版的改进**：原版 `LastResponse` 跨 goroutine 无锁读写(数据竞争)，补 mutex 修掉；banner 读取的固定 3s/5s sleep 刻意不被 timeout 截断(否则慢速 banner 漏报)；端口 23 已在扫描覆盖、telnet.txt 现成；0 新增依赖；telnetlib 检测大脑(MakeServerType/isLoginFailed)单测全绿，gopocs 14 测全绿，18 包回归全绿
 > - v0.1.21-icmp: 缺口④ ICMP 存活探测落地——新增 `internal/discovery/hostalive`，`-ping` flag 开启后对 CIDR/IP段先 ICMP 预筛、只扫存活主机(大网段提速)；**默认关闭**(遵循"不能漏"：封 ICMP 但开端口的加固主机不能因预筛被丢)；两级策略 raw ICMP 监听(0 新增依赖，x/net/icmp 转 direct)→系统 ping 命令(无特权兜底)；**修原版 3 个隐患**：Windows `ping -w 1`(1ms 超时几乎必漏)→`-w 1000`、用 stdout 含 `ttl=` 判定(替代 Windows 不可靠退出码+原版 /bin/bash shell 技巧)、Windows 用 System32\ping.exe 绝对路径(规避 PATH 里 python ping.py 劫持，实测揪出)；loopback 端到端实测预筛生效；19 包回归全绿
+> - v0.1.22-passive-fp: 缺口⑤ 被动指纹识别落地——**揪出既有缺陷**：`TechDetect:true` 早已开启、httpx wappalyzer 也跑了、`resp.Technologies` 也填充了，但从头到尾**被静默丢弃**(`ToFingerprintContext` 不含它)；本次将被动技术栈接入报告(Source=wappalyzer,confidence=75)+ 喂给 pocmap 选 POC(指纹→更多针对性 POC→发现更多问题)；本地 WordPress/jQuery/Bootstrap 靶标端到端实测 `5 active + 7 passive`，被动额外识别出主动漏掉的 MySQL/PHP 且带版本号(Python:3.14.4/WordPress:6.4.2)；0 新增依赖、0 新增文件(仅 pipeline 接线)；19 包回归全绿
+
+---
+
+## v0.1.22-passive-fp — 被动指纹识别（缺口⑤）
+
+### 关键成果（揪出既有缺陷）
+
+- **被动技术栈被静默丢弃**：`probeAndFingerprint` 早已设 `TechDetect: true`，httpx 的 wappalyzer 引擎也确实跑了、`resp.Technologies` 也填充了——但这个字段**从头到尾没人用**（主动指纹的 `ToFingerprintContext` 只喂 body/title/header/banner，不含 Technologies）。等于花了 wappalyzer 的探测成本却把结果扔了。
+- **本次补全**：被动识别出的技术栈现在
+  1. **写入报告**（`Source=wappalyzer`，`Confidence=75`，低于精选 DSL 规则的 90）；
+  2. **喂给 pocmap 选 POC**——被动产品名一并参与指纹→POC 撮合，捕获主动 DSL 规则漏掉的产品，间接发现更多漏洞。
+
+### 设计取舍
+
+- **被动与主动并存、不去重**：同一产品可能被主动(90)和被动(75)各报一次，confidence 可区分来源；pocmap 本就对 POC 文件去重，重复产品名无副作用。报告显示两条是诚实的（两个独立检测源）。
+- **不新增 `-no-passive` 开关**：被动产品喂 pocmap 是纯增量——匹配不上的产品名在 pocmap 直接跳过，匹配上的才多跑 POC，无噪音放大风险。
+- **不重复造轮子**：wappalyzer 有数千条签名，远胜手写 header 启发式；被动指纹直接复用 httpx 已内置的 wappalyzer，是正确做法。
+
+### 修改文件
+
+- `internal/app/pipeline.go`：`probeAndFingerprint` 在主动匹配后追加 `resp.Technologies` → 写报告 + 加入 `hits` 喂 POC 选择；日志区分 `N active + M passive(tech)`。
+- `cmd/dddd/main.go`：版本 `0.1.21-dev → 0.1.22-dev`。
+- `README.md`：已实现能力加被动指纹，Roadmap 移除该项。
+
+### 验证（本地靶标端到端）
+
+- 本地 python http 服务挂 WordPress/jQuery/Bootstrap 特征页，`dddd-next -t http://127.0.0.1:8099`（绕过代理）实测：`live web: 1, fingerprint hits: 5 active + 7 passive(tech)`。
+- 报告确认被动条目（confidence=75）：Bootstrap / **MySQL** / **PHP** / Python:3.14.4 / SimpleHTTP:0.6 / WordPress:6.4.2 / jQuery——其中 MySQL/PHP 是主动 DSL 漏掉的，且被动带**版本号**（主动规则无）。
+- `go build` + `go test ./...` 19 包回归全绿。
 
 ---
 
