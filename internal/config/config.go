@@ -32,6 +32,7 @@ type Config struct {
 	ProxyURL  string
 
 	PingFirst bool
+	SkipCDN   bool
 
 	FullScan          bool
 	DisableGeneralPoc bool
@@ -90,6 +91,7 @@ func ParseArgs(args []string) (Config, error) {
 	fs.StringVar(&cfg.ProxyURL, "proxy", cfg.ProxyURL, "HTTP/SOCKS5 proxy URL for outgoing requests")
 
 	fs.BoolVar(&cfg.PingFirst, "ping", cfg.PingFirst, "ICMP-ping hosts first and only port-scan those that reply (faster on large ranges; skips ICMP-blocking hosts)")
+	fs.BoolVar(&cfg.SkipCDN, "skip-cdn", cfg.SkipCDN, "skip probing domains identified as CDN/WAF-fronted (default: identify and flag, but still probe)")
 
 	fs.BoolVar(&cfg.FullScan, "full", cfg.FullScan, "run all nuclei templates instead of fingerprint-matched POCs")
 	fs.BoolVar(&cfg.DisableGeneralPoc, "no-general", cfg.DisableGeneralPoc, "skip the product-independent General-Poc set in precise mode")

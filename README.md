@@ -4,7 +4,7 @@
 
 `dddd-next` 是对原 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 项目的现代化重写。原项目自 2024 年后基本停更，但其依赖的 `nuclei`、`httpx`、`subfinder` 等仍在快速迭代，内置 POC 也已老化。本项目在保留 dddd 设计哲学的基础上，采用现代 Go 标准结构重构，依赖直接跟随 projectdiscovery 主线版本。
 
-> **当前状态**：核心扫描链路已全部打通，工程质量（依赖管理 / 结构 / 测试）已超越原版；功能广度约为原版的 75%，仍在对齐中（见下方 Roadmap）。
+> **当前状态**：核心扫描链路已全部打通，工程质量（依赖管理 / 结构 / 测试）已超越原版；功能广度约为原版的 80%，仍在对齐中（见下方 Roadmap）。
 
 ## 与原项目的差异（全栈升级）
 
@@ -16,7 +16,7 @@
 | 项目结构 | 扁平（common / lib / gopocs） | 标准 Go（cmd / internal / pkg） |
 | 配置注入 | 全局变量 `structs.GlobalConfig` | CLI flag（标准库）+ context |
 | 错误处理 | 大量 panic / log.Fatal | error 链 + context 取消 |
-| 测试 | 基本无 | 19 包单元测试全绿 |
+| 测试 | 基本无 | 20 包单元测试全绿 |
 
 ## 已实现能力
 
@@ -26,6 +26,7 @@
 - 子域名枚举（subfinder）+ DNS 解析
 - 自研 TCP 端口扫描 + 服务指纹识别（fingerprintx，可识别非标准端口上的服务）
 - ICMP 存活探测（`-ping` 可选预筛，大网段提速；默认关闭以免漏掉封 ICMP 的主机）
+- CDN / WAF 识别（271 条 CNAME 库，含国内主流厂商；默认标记仍探测，`-skip-cdn` 可排除）
 - 指纹 → POC 智能映射（只对命中产品发对应 POC，避免无效请求）
 - Nuclei v3 漏洞扫描（默认指纹精准模式，`-full` 切全量）
 - 弱口令爆破 **11 种**：SSH / FTP / MySQL / PostgreSQL / Redis / MSSQL / Oracle / MongoDB / SMB / RDP / Telnet
@@ -39,7 +40,6 @@
 为达成对原版的完整功能复刻，仍需补齐：
 
 - **gopocs 协议**（原版 17 种，已覆盖 15 / 缺 NetBIOS 信息收集，shiro 已由 nuclei 模板覆盖）
-- **CDN 识别与过滤**
 
 ## 项目结构
 
