@@ -52,10 +52,13 @@ var defaultServicePorts = map[int]string{
 	27017: "mongodb",
 }
 
-// Endpoint is an open host:port discovered by the port scanner.
+// Endpoint is an open host:port discovered by the port scanner. Service, when
+// set by the fingerprinter, routes the cracker directly; empty falls back to
+// the port→service map.
 type Endpoint struct {
-	Host string
-	Port int
+	Host    string
+	Port    int
+	Service string
 }
 
 type Options struct {
@@ -157,9 +160,9 @@ type job struct {
 func (e *Engine) routableJobs(endpoints []Endpoint) []job {
 	var jobs []job
 	for _, ep := range endpoints {
-		svc, ok := e.servicePorts[ep.Port]
-		if !ok {
-			continue
+		svc := ep.Service
+		if svc == "" {
+			svc = e.servicePorts[ep.Port] // fall back to the port→service map
 		}
 		if _, ok := e.crackers[svc]; !ok {
 			continue

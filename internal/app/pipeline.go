@@ -21,6 +21,7 @@ import (
 	"dddd-next/internal/discovery/dnsx"
 	"dddd-next/internal/discovery/httpprobe"
 	"dddd-next/internal/discovery/portscan"
+	"dddd-next/internal/discovery/servicedetect"
 	"dddd-next/internal/discovery/subfinder"
 	"dddd-next/internal/discovery/uncover"
 	"dddd-next/internal/fingerprint"
@@ -78,10 +79,11 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		openPorts = append(openPorts, p.recon(ctx, searchQueries)...)
 	}
 	if len(openPorts) > 0 {
+		services := p.detectServices(ctx, openPorts)
 		for _, r := range openPorts {
 			probeInputs = append(probeInputs, fmt.Sprintf("%s:%d", r.Host, r.Port))
 		}
-		p.bruteForce(ctx, openPorts)
+		p.bruteForce(ctx, openPorts, services)
 	}
 	if p.cfg.Subdomain && len(domains) > 0 {
 		domains = p.enumerateSubdomains(ctx, domains)
@@ -171,10 +173,14 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 // found (ssh/mysql/postgresql/redis/ftp), writing each hit to the report. It
 // runs independently of the web probe chain; non-service ports are ignored by
 // the engine's routing.
-func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result) {
+func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result, services map[string]string) {
 	endpoints := make([]gopocs.Endpoint, 0, len(openPorts))
 	for _, r := range openPorts {
-		endpoints = append(endpoints, gopocs.Endpoint{Host: r.Host, Port: r.Port})
+		ep := gopocs.Endpoint{Host: r.Host, Port: r.Port}
+		if svc := services[fmt.Sprintf("%s:%d", r.Host, r.Port)]; svc != "" {
+			ep.Service = svc
+		}
+		endpoints = append(endpoints, ep)
 	}
 
 	dictDir := filepath.Join(p.configDir, "dict")
@@ -192,6 +198,30 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result) 
 		n++
 	}
 	fmt.Printf("[*] weak credentials: %d\n", n)
+}
+
+// detectServices fingerprints each open port so brute forcing routes by the
+// real service, not just the port number. Returns host:port → service name.
+func (p *Pipeline) detectServices(ctx context.Context, openPorts []portscan.Result) map[string]string {
+	eps := make([]servicedetect.Endpoint, 0, len(openPorts))
+	for _, r := range openPorts {
+		eps = append(eps, servicedetect.Endpoint{Host: r.Host, Port: r.Port})
+	}
+	fmt.Printf("[*] fingerprinting %d open port(s)...\n", len(eps))
+
+	det := servicedetect.New(servicedetect.DefaultOptions())
+	out := make(map[string]string)
+	for res := range det.Detect(ctx, eps) {
+		if res.Service == "" {
+			continue
+		}
+		out[fmt.Sprintf("%s:%d", res.Host, res.Port)] = res.Service
+		_ = p.auditor.LogInfo("service", map[string]any{
+			"host": res.Host, "port": res.Port, "service": res.Service, "version": res.Version,
+		})
+	}
+	fmt.Printf("[*] services identified: %d\n", len(out))
+	return out
 }
 
 // recon resolves search-query targets through the uncover engines (fofa/hunter/
