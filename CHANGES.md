@@ -15,6 +15,39 @@
 > - v0.1.10-gopocs: 弱口令爆破模块落地（高频子集+成熟库策略）——ssh/mysql/postgresql/redis/ftp 5 协议 Cracker（复用全家桶已有 client 库，仅新增 jlaffaye/ftp）；统一字典解析(user:pass + 纯密码)、端口→服务路由、per-endpoint 并发；接入端口扫描链路(开放服务端口→爆破)；真实 SSH server 端到端实测命中 root:root 入报告(High)；15 包回归全绿
 > - v0.1.11-recon: 外部测绘 API 落地（uncover→fofa/hunter/quake）——搜索语法目标接入主编排，测绘资产复用端口扫描下游(host:port→探测+爆破)，内网/互联网两套场景在此统一；`.env` 密钥管理(gitignored + `.env.example` 模板 + `config.LoadDotEnv`)；**端到端揪出 uncover v1.2.0 的 hunter bug**(io.ReadAll 提前读空 resp.Body→Decode 必 EOF→吐空 Result)，升级 v1.2.1 修复；真实 Hunter 实测 `ip="1.1.1.1"` 返回 36 条带真实 ip/host/port 资产；15 包回归全绿
 > - v0.1.12-fingerpoc: 指纹→POC 精准联动落地（复刻原版 dddd 灵魂）——新增 `internal/scanner/pocmap` 撮合引擎（mapping.yaml 956 产品→legacy POC，`Resolve` 复刻原版 GetPocs + General-Poc 通用集 + 文件存在校验/去重），pipeline 默认精准模式只对指纹命中产品发对应 POC（`-full` 切全量、`-no-general` 关通用集）；**端到端揪出既有 httpprobe bug**——httpx 未设 `ResponseInStdout` 致 `Result.ResponseBody`/`RawHeaders` 恒空、`body=`/`header=` 指纹全部失效、精准模式空转，修复后本地 Liferay 靶标实测指纹命中→nuclei 从 13000+ 精准缩到 12 POC；16 包回归全绿
+> - v0.1.13-gopocs-db: gopocs 弱口令爆破扩容 5→7 协议——新增 mssql（go-mssqldb，ADO 风格 DSN 避开密码里 `@#!` 的 URL 转义，识别 error 18456 登录失败）+ oracle（go-ora `BuildUrl`，字典无 service name 故轮 `orcl`/`XE`/`ORCL` 默认服务，区分 ORA-01017 密码错↔ORA-12514 服务不存在）；端口 1433/1521 本就在扫描覆盖内，driver+字典全现成（复用 nuclei 全家桶依赖，**0 新增第三方依赖**，tidy 转 direct）；gopocs 7 测全绿（路由+auth/service 识别），16 包回归全绿
+
+---
+
+## v0.1.13-gopocs-db — 弱口令爆破扩容（mssql + oracle，5 → 7 协议）
+
+### 关键成果
+
+- **协议广度 5 → 7**：gopocs 新增 SQL Server、Oracle 两个企业核心数据库的弱口令爆破，对齐原版 dddd 的高价值目标。driver（`go-mssqldb`/`go-ora`）与字典（`mssql.txt` 164 条 / `oracle.txt` 47 条）全现成，端口 1433/1521 已在端口扫描默认集内——纯接线，**0 新增第三方依赖**（复用 nuclei 全家桶依赖树，tidy 将两者转 direct）。
+- **oracle 的 service name 处理**：弱口令字典只有 user:pass、无 service name，故对每个凭据轮询常见默认服务 `orcl`(11g)/`XE`(Express)/`ORCL`；区分 `ORA-01017`（服务可达、密码错→换凭据）与 `ORA-12514/12505`（服务名不存在→换服务名），连接层错误直接放弃 endpoint。
+- **mssql 的 DSN 选择**：用 ADO 风格 `server=;user id=;password=` 而非 `sqlserver://` URL 形式，避免密码里的 `@ # !`（字典里大量存在）被 URL 转义破坏；`encrypt=disable` 兼容老服务器。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/mssql.go`**：`sqlserver` driver + `PingContext`，`isMSSQLAuthFailure` 识别 error 18456（Login failed for user）。
+- **`internal/scanner/gopocs/oracle.go`**：`go_ora.BuildUrl` 构造 DSN（自带 user/pass 转义）+ 轮默认 service，`isOracleAuthFailure`(ORA-01017) / `isOracleServiceMissing`(ORA-12514/12505)。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`crackers` 注册 mssql/oracle；`defaultServicePorts` 加 1433→mssql、1521→oracle。
+- `internal/scanner/gopocs/gopocs_test.go`：新增 3 测——DB 端口路由、mssql/oracle 的 auth/service 错误识别（纯函数，无需真实 DB server）。
+- `cmd/dddd/main.go`：版本 `0.1.12-dev → 0.1.13-dev`。
+- `go.mod`：`go-mssqldb`、`sijms/go-ora/v2` indirect → direct。
+
+### 验证
+
+- gopocs 包 7 测全绿（含新 3 测）；`go build` + `go test ./...` 16 包回归全绿。
+- 真实 DB server 端到端未做（需起 SQL Server/Oracle 实例，重）；cracker 正确性靠成熟 driver 库 + auth/service 错误识别单测 + 与现有 mysql/pg 同范式保证。
+
+### 注意 / 后续
+
+- oracle 默认 service 列表为 `orcl/XE/ORCL`，非默认 service 名（如自定义 PDB）当前不爆破；可后续扩列表或加 SID 字典。
+- 仍缺的爆破协议：mongodb（无认证误报需处理）、smb（NTLM）、telnet（无标准认证、靠文本匹配）、rdp；ms17010/shiro 属漏洞类（非弱口令），另行处理。
 
 ---
 

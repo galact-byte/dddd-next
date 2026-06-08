@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -150,4 +151,44 @@ func startTestSSHServer(t *testing.T, user, pass string) (string, int) {
 
 	addr := ln.Addr().(*net.TCPAddr)
 	return "127.0.0.1", addr.Port
+}
+
+func TestRoutableJobsRoutesDBPorts(t *testing.T) {
+	e := New(DefaultOptions(""))
+	jobs := e.routableJobs([]Endpoint{
+		{Host: "1.2.3.4", Port: 1433}, // mssql
+		{Host: "1.2.3.4", Port: 1521}, // oracle
+		{Host: "1.2.3.4", Port: 9999}, // no cracker, skipped
+	})
+	if len(jobs) != 2 {
+		t.Fatalf("want 2 jobs (mssql+oracle), got %v", jobs)
+	}
+	svc := map[string]bool{}
+	for _, j := range jobs {
+		svc[j.service] = true
+	}
+	if !svc["mssql"] || !svc["oracle"] {
+		t.Errorf("want mssql+oracle routed, got %v", svc)
+	}
+}
+
+func TestMSSQLAuthFailureDetection(t *testing.T) {
+	if !isMSSQLAuthFailure(errors.New("mssql: Login failed for user 'sa'.")) {
+		t.Error("login-failed (18456) should be an auth failure")
+	}
+	if isMSSQLAuthFailure(errors.New("dial tcp: i/o timeout")) {
+		t.Error("connection timeout must not be treated as auth failure")
+	}
+}
+
+func TestOracleAuthAndServiceDetection(t *testing.T) {
+	if !isOracleAuthFailure(errors.New("ORA-01017: invalid username/password; logon denied")) {
+		t.Error("ORA-01017 should be an auth failure")
+	}
+	if isOracleAuthFailure(errors.New("ORA-12514: TNS:listener does not know of service")) {
+		t.Error("ORA-12514 is service-missing, not an auth failure")
+	}
+	if !isOracleServiceMissing(errors.New("ORA-12514: TNS:listener does not currently know of service requested")) {
+		t.Error("ORA-12514 should be detected as service-missing")
+	}
 }
