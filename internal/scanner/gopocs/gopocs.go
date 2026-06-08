@@ -53,7 +53,9 @@ var defaultServicePorts = map[int]string{
 	1521:  "oracle",
 	3306:  "mysql",
 	5432:  "postgresql",
+	5555:  "adb",
 	6379:  "redis",
+	11211: "memcached",
 	27017: "mongodb",
 }
 
@@ -105,7 +107,10 @@ func New(opts Options) *Engine {
 			"smb":        smbCracker{},
 		},
 		probes: map[string]ProbeFunc{
-			"smb": probeMS17010,
+			"smb":       probeMS17010,
+			"memcached": probeMemcached,
+			"adb":       probeADB,
+			"jdwp":      probeJDWP,
 		},
 		servicePorts: defaultServicePorts,
 	}

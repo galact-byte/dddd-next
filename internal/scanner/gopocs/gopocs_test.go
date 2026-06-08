@@ -240,3 +240,21 @@ func TestRoutableJobsIncludesProbeOnly(t *testing.T) {
 		t.Fatalf("probe-only service should be routable, got %v", jobs)
 	}
 }
+
+func TestRoutableJobsRoutesUnauthPorts(t *testing.T) {
+	e := New(DefaultOptions(""))
+	jobs := e.routableJobs([]Endpoint{
+		{Host: "1.2.3.4", Port: 11211}, // memcached (probe)
+		{Host: "1.2.3.4", Port: 5555},  // adb (probe)
+	})
+	if len(jobs) != 2 {
+		t.Fatalf("want 2 jobs (memcached+adb probes), got %v", jobs)
+	}
+	svc := map[string]bool{}
+	for _, j := range jobs {
+		svc[j.service] = true
+	}
+	if !svc["memcached"] || !svc["adb"] {
+		t.Errorf("want memcached+adb routed, got %v", svc)
+	}
+}

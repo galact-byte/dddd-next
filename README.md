@@ -28,6 +28,7 @@
 - Nuclei v3 漏洞扫描（默认指纹精准模式，`-full` 切全量）
 - 弱口令爆破 **9 种**：SSH / FTP / MySQL / PostgreSQL / Redis / MSSQL / Oracle / MongoDB / SMB
 - 漏洞探测：MS17-010（EternalBlue 永恒之蓝）SMB 远程命令执行
+- 未授权访问探测：memcached / ADB（安卓调试桥，RCE 等价）/ JDWP（Java 调试，RCE 等价）
 - Hunter / Fofa / Quake 测绘 API（`.env` 管理密钥）
 - TXT / JSON / HTML 三种报告 + 审计日志
 
@@ -35,7 +36,7 @@
 
 为达成对原版的完整功能复刻，仍需补齐：
 
-- **gopocs 协议**（原版 17 种，已 10 / 缺 6）：rdp / telnet 弱口令；memcached / adb / jdwp / NetBIOS 未授权与信息收集（shiro 已由 nuclei 模板覆盖）
+- **gopocs 协议**（原版 17 种，已覆盖 13 / 缺 3）：rdp / telnet 弱口令、NetBIOS 信息收集（shiro 已由 nuclei 模板覆盖）
 - **被动指纹识别**（当前仅主动）
 - **ICMP 存活探测**
 - **CDN 识别与过滤**
