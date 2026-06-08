@@ -258,3 +258,11 @@ func TestRoutableJobsRoutesUnauthPorts(t *testing.T) {
 		t.Errorf("want memcached+adb routed, got %v", svc)
 	}
 }
+
+func TestRoutableJobsRoutesRDP(t *testing.T) {
+	e := New(DefaultOptions(""))
+	jobs := e.routableJobs([]Endpoint{{Host: "1.2.3.4", Port: 3389}})
+	if len(jobs) != 1 || jobs[0].service != "rdp" {
+		t.Fatalf("3389 should route to rdp, got %v", jobs)
+	}
+}

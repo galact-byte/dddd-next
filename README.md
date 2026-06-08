@@ -10,7 +10,7 @@
 
 | 维度 | 原 dddd | dddd-next |
 |:---|:---|:---|
-| 依赖管理 | `lib/` 内嵌 vendored 改造版 nuclei 等 | go module 直接依赖主线（仅 1 个依赖冲突 `replace`） |
+| 依赖管理 | `lib/` 内嵌 vendored 改造版 nuclei 等 | go module 直接依赖主线（2 个 `replace`：client-go 依赖冲突修复 + grdp 用 fscan 同款 fork） |
 | Nuclei | v3.1.8（2024 初） | v3.8.0（最新），模板量约 5.4× |
 | POC 更新 | 依赖二进制重新发布 | `dddd update` 一键拉取官方 nuclei-templates |
 | 项目结构 | 扁平（common / lib / gopocs） | 标准 Go（cmd / internal / pkg） |
@@ -26,7 +26,7 @@
 - 自研 TCP 端口扫描 + 服务指纹识别（fingerprintx，可识别非标准端口上的服务）
 - 指纹 → POC 智能映射（只对命中产品发对应 POC，避免无效请求）
 - Nuclei v3 漏洞扫描（默认指纹精准模式，`-full` 切全量）
-- 弱口令爆破 **9 种**：SSH / FTP / MySQL / PostgreSQL / Redis / MSSQL / Oracle / MongoDB / SMB
+- 弱口令爆破 **10 种**：SSH / FTP / MySQL / PostgreSQL / Redis / MSSQL / Oracle / MongoDB / SMB / RDP
 - 漏洞探测：MS17-010（EternalBlue 永恒之蓝）SMB 远程命令执行
 - 未授权访问探测：memcached / ADB（安卓调试桥，RCE 等价）/ JDWP（Java 调试，RCE 等价）
 - Hunter / Fofa / Quake 测绘 API（`.env` 管理密钥）
@@ -36,7 +36,7 @@
 
 为达成对原版的完整功能复刻，仍需补齐：
 
-- **gopocs 协议**（原版 17 种，已覆盖 13 / 缺 3）：rdp / telnet 弱口令、NetBIOS 信息收集（shiro 已由 nuclei 模板覆盖）
+- **gopocs 协议**（原版 17 种，已覆盖 14 / 缺 2）：telnet 弱口令、NetBIOS 信息收集（shiro 已由 nuclei 模板覆盖）
 - **被动指纹识别**（当前仅主动）
 - **ICMP 存活探测**
 - **CDN 识别与过滤**
