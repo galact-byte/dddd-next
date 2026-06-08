@@ -38,6 +38,10 @@ type Cracker interface {
 	Try(ctx context.Context, host string, port int, cred Credential, timeout time.Duration) (bool, error)
 }
 
+// ProbeFunc is a credential-less service check (e.g. MS17-010): it returns a
+// Finding when the host is vulnerable, nil when not.
+type ProbeFunc func(ctx context.Context, host string, port int, timeout time.Duration) (*types.Finding, error)
+
 // defaultServicePorts routes a default port to the service whose dict/cracker
 // handles it. Only ports listed here are brute-forced; everything else is left
 // to the HTTP probe. Copied into each Engine so callers/tests can override.
@@ -76,6 +80,7 @@ func DefaultOptions(dictDir string) Options {
 type Engine struct {
 	opts         Options
 	crackers     map[string]Cracker
+	probes       map[string]ProbeFunc
 	servicePorts map[int]string
 }
 
@@ -98,6 +103,9 @@ func New(opts Options) *Engine {
 			"oracle":     oracleCracker{},
 			"mongodb":    mongodbCracker{},
 			"smb":        smbCracker{},
+		},
+		probes: map[string]ProbeFunc{
+			"smb": probeMS17010,
 		},
 		servicePorts: defaultServicePorts,
 	}
@@ -130,7 +138,8 @@ func (e *Engine) Run(ctx context.Context, endpoints []Endpoint) <-chan types.Fin
 
 		for _, j := range jobs {
 			creds := dicts[j.service]
-			if len(creds) == 0 {
+			_, hasProbe := e.probes[j.service]
+			if len(creds) == 0 && !hasProbe {
 				continue
 			}
 
@@ -145,7 +154,7 @@ func (e *Engine) Run(ctx context.Context, endpoints []Endpoint) <-chan types.Fin
 			go func(j job, creds []Credential) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				e.bruteEndpoint(ctx, j, creds, timeout, out)
+				e.handleEndpoint(ctx, j, creds, timeout, out)
 			}(j, creds)
 		}
 		wg.Wait()
@@ -166,7 +175,9 @@ func (e *Engine) routableJobs(endpoints []Endpoint) []job {
 		if svc == "" {
 			svc = e.servicePorts[ep.Port] // fall back to the port→service map
 		}
-		if _, ok := e.crackers[svc]; !ok {
+		_, hasCracker := e.crackers[svc]
+		_, hasProbe := e.probes[svc]
+		if !hasCracker && !hasProbe {
 			continue
 		}
 		jobs = append(jobs, job{ep: ep, service: svc})
@@ -193,6 +204,23 @@ func (e *Engine) loadDicts(jobs []job) map[string][]Credential {
 		dicts[svc] = creds
 	}
 	return dicts
+}
+
+// handleEndpoint runs the service's credential-less probe (if any), then brute
+// forces with the dict (if the service has a cracker and credentials).
+func (e *Engine) handleEndpoint(ctx context.Context, j job, creds []Credential, timeout time.Duration, out chan<- types.Finding) {
+	if probe, ok := e.probes[j.service]; ok {
+		if f, perr := probe(ctx, j.ep.Host, j.ep.Port, timeout); perr == nil && f != nil {
+			select {
+			case out <- *f:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+	if _, ok := e.crackers[j.service]; ok && len(creds) > 0 {
+		e.bruteEndpoint(ctx, j, creds, timeout, out)
+	}
 }
 
 func (e *Engine) bruteEndpoint(ctx context.Context, j job, creds []Credential, timeout time.Duration, out chan<- types.Finding) {

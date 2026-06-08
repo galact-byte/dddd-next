@@ -230,3 +230,13 @@ func TestSMBAuthFailureDetection(t *testing.T) {
 		t.Error("connection error must not be treated as auth failure")
 	}
 }
+
+func TestRoutableJobsIncludesProbeOnly(t *testing.T) {
+	e := New(DefaultOptions(""))
+	e.probes["xprobe"] = func(context.Context, string, int, time.Duration) (*types.Finding, error) { return nil, nil }
+	e.servicePorts[65000] = "xprobe"
+	jobs := e.routableJobs([]Endpoint{{Host: "1.2.3.4", Port: 65000}})
+	if len(jobs) != 1 || jobs[0].service != "xprobe" {
+		t.Fatalf("probe-only service should be routable, got %v", jobs)
+	}
+}
