@@ -22,6 +22,47 @@
 > - v0.1.17-ms17010: 永恒之蓝 MS17-010 探测落地——gopocs 新增"探测型 POC"框架(probes map，无 cred 单次探测，与弱口令 crackers 并行)；手写 SMB1 四步握手(negotiate→session→tree→trans)，解密原版 AES 藏的请求包保证字节一致，判断 0xC0000205 命中报 Critical；用 copy 修正原版全局 patch 的并发 race；nuclei 无此模板的真缺口、内网必备；SMB(445) 端点经 gopocs 自动触发；gopocs 11 测全绿，17 包回归全绿
 > - v0.1.18-unauth: gopocs 补 3 类未授权/RCE 探测——复用探测型 POC 框架(probes)：memcached(stats→STAT,High)、adb(CNXN 握手→安卓调试桥 RCE 等价,Critical)、jdwp(JDWP-Handshake 回显→Java 调试 RCE,Critical)；端口 5555(adb) 补入扫描默认集、jdwp 靠 fingerprintx 识别路由；均为 nuclei 不覆盖的网络层未授权；原版 17 gopocs 协议已覆盖 13(缺 rdp/telnet/NetBIOS，shiro 由 nuclei 覆盖)；gopocs 12 测全绿，17 包回归全绿
 > - v0.1.19-rdp: gopocs 弱口令 9→10，补 RDP（远程桌面 3389 内网高价值）——引入 grdp(replace 到 shadow1ng/grdp v1.0.3，fscan 同款 fork)，NTLMv2 over tpkt/x224/t125/sec/pdu 协议栈；用 sync.Once+channel 替代原版 WaitGroup+breakFlag(无 race)+ctx/超时保护；**首次新增第三方依赖(主人确认，RDP 旧工具能发现的不漏)**；端口 3389 已在扫描覆盖、rdp.txt 现成；原版 17 协议已覆盖 14；gopocs 13 测全绿，17 包回归全绿
+> - v0.1.20-telnet: gopocs 协议覆盖 14→15，补 telnet（弱口令爆破 + 未授权访问探测）——移植原版 telnetlib 协议栈为子包(精简掉几十个未用 option 常量)，`probeTelnet` 报未授权直进 shell(Critical)、`telnetCracker` 按 MakeServerType 判定的"仅密码/用户名+密码"两种模式爆破；**对原版的改进**：原版 `LastResponse` 跨 goroutine 无锁读写(数据竞争)，补 mutex 修掉；banner 读取的固定 3s/5s sleep 刻意不被 timeout 截断(否则慢速 banner 漏报)；端口 23 已在扫描覆盖、telnet.txt 现成；0 新增依赖；telnetlib 检测大脑(MakeServerType/isLoginFailed)单测全绿，gopocs 14 测全绿，18 包回归全绿
+
+---
+
+## v0.1.20-telnet — gopocs 补 telnet 弱口令 + 未授权探测（协议 14 → 15）
+
+### 关键成果
+
+- **telnet 双形态接入**：telnet 既可能"直进 shell 无需认证"，也可能"仅密码/用户名+密码"登录，因此同时注册为 probe + cracker。
+  - **`probeTelnet`**（未授权）：`MakeServerType` 判定为 `UnauthorizedAccess`（banner 直接是 `/ #`、`<router>`、`#` 等 shell 提示符）即报 Critical。
+  - **`telnetCracker`**（弱口令）：按 `MakeServerType` 判定的 `OnlyPassword` / `UsernameAndPassword` 模式驱动登录，命中报 High。遇到未授权或无法识别（Closed）则放弃该端点（未授权已由 probe 报告，避免重复/误报）。
+- **0 新增依赖**：telnet 无成熟可复用的第三方库，原版自写 `telnetlib`，本项目同样以子包形式移植（仅标准库 net/regexp）。
+- **对原版的改进**：原版 `telnetlib.Client.LastResponse` 被读取协程和登录主流程跨 goroutine 无锁读写（数据竞争），本项目用 `sync.Mutex` 保护。
+
+### 设计取舍
+
+- **协议栈独立成子包**：telnet 常量 `IAC`/`ECHO`/`SE` 过于通用，与 smb/ms17010 易撞名；移植为 `internal/scanner/gopocs/telnetlib` 子包，既隔离命名空间又对齐原版结构。
+- **banner sleep 不被 timeout 截断**：读取 banner 的固定 3s/5s 等待是检测正确性的一部分——慢速 telnet 服务（路由器/交换机）需要时间吐 banner，若被短 timeout 截断会漏报，违背"旧工具能发现的新工具不能漏"。`timeout` 仅作用于 dial，协议时序保持忠实。
+- **已知遗留**：原版 `isLoginSucceed` 的 `(?:s)last login` 正则疑为 `(?is)last login` 笔误（仅匹配字面 "slast login"）。当前忠实复刻保留（不在无活体靶标验证下擅改检测启发式），主提示符 `^[#$]`/`^<word>` 已覆盖主要登录成功场景。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/telnetlib/telnet.go`**：移植 + 精简的 telnet 协议客户端（IAC 协商应答、banner 读取、`MakeServerType` 类型判定、三种登录模式）。
+- **`internal/scanner/gopocs/telnetlib/telnet_test.go`**：检测大脑单测（`MakeServerType` 7 种 banner 分类、`isLoginFailed`/`isLoginSucceed` 短路分支，毫秒级）。
+- **`internal/scanner/gopocs/telnet.go`**：`telnetCracker`（Cracker）+ `probeTelnet`（ProbeFunc）。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`crackers` 注册 telnet、`probes` 注册 probeTelnet、`defaultServicePorts` 加 23→telnet。
+- `internal/scanner/gopocs/gopocs_test.go`：新增 telnet 路由测试（验证 23→telnet 且 cracker+probe 均注册）。
+- `cmd/dddd/main.go`：版本 `0.1.19-dev → 0.1.20-dev`。
+- `README.md`：弱口令 10 → 11，gopocs 覆盖更新，Roadmap 更新。
+
+### 验证
+
+- telnetlib 检测大脑单测全绿；gopocs 14 测全绿（含 telnet 路由）；`go build` + `go test ./...` 18 包回归全绿。
+- 真实 telnet server 端到端未做（无靶机）；检测/登录逻辑移植自原版已验证代码，类型判定与字符串匹配分支有单测覆盖。
+
+### gopocs 覆盖（原版 17 协议已覆盖 15）
+
+弱口令 11：ssh/ftp/mysql/postgresql/redis/mssql/oracle/mongodb/smb/rdp/telnet。探测型 4：ms17010/memcached/adb/jdwp（telnet 未授权与弱口令同源，计入 telnet）。仍缺：NetBIOS（信息收集类，低价值）；shiro 由 nuclei 覆盖。
 
 ---
 

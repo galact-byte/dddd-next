@@ -266,3 +266,18 @@ func TestRoutableJobsRoutesRDP(t *testing.T) {
 		t.Fatalf("3389 should route to rdp, got %v", jobs)
 	}
 }
+
+func TestRoutableJobsRoutesTelnet(t *testing.T) {
+	e := New(DefaultOptions(""))
+	jobs := e.routableJobs([]Endpoint{{Host: "1.2.3.4", Port: 23}})
+	if len(jobs) != 1 || jobs[0].service != "telnet" {
+		t.Fatalf("23 should route to telnet, got %v", jobs)
+	}
+	// telnet must have both a brute-force cracker and an unauthorized-access probe.
+	if _, ok := e.crackers["telnet"]; !ok {
+		t.Error("telnet cracker not registered")
+	}
+	if _, ok := e.probes["telnet"]; !ok {
+		t.Error("telnet probe not registered")
+	}
+}

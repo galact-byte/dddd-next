@@ -48,6 +48,7 @@ type ProbeFunc func(ctx context.Context, host string, port int, timeout time.Dur
 var defaultServicePorts = map[int]string{
 	21:    "ftp",
 	22:    "ssh",
+	23:    "telnet",
 	445:   "smb",
 	1433:  "mssql",
 	1521:  "oracle",
@@ -107,12 +108,14 @@ func New(opts Options) *Engine {
 			"mongodb":    mongodbCracker{},
 			"smb":        smbCracker{},
 			"rdp":        rdpCracker{},
+			"telnet":     telnetCracker{},
 		},
 		probes: map[string]ProbeFunc{
 			"smb":       probeMS17010,
 			"memcached": probeMemcached,
 			"adb":       probeADB,
 			"jdwp":      probeJDWP,
+			"telnet":    probeTelnet,
 		},
 		servicePorts: defaultServicePorts,
 	}
