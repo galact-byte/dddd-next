@@ -156,19 +156,20 @@ func startTestSSHServer(t *testing.T, user, pass string) (string, int) {
 func TestRoutableJobsRoutesDBPorts(t *testing.T) {
 	e := New(DefaultOptions(""))
 	jobs := e.routableJobs([]Endpoint{
-		{Host: "1.2.3.4", Port: 1433}, // mssql
-		{Host: "1.2.3.4", Port: 1521}, // oracle
-		{Host: "1.2.3.4", Port: 9999}, // no cracker, skipped
+		{Host: "1.2.3.4", Port: 1433},  // mssql
+		{Host: "1.2.3.4", Port: 1521},  // oracle
+		{Host: "1.2.3.4", Port: 27017}, // mongodb
+		{Host: "1.2.3.4", Port: 9999},  // no cracker, skipped
 	})
-	if len(jobs) != 2 {
-		t.Fatalf("want 2 jobs (mssql+oracle), got %v", jobs)
+	if len(jobs) != 3 {
+		t.Fatalf("want 3 jobs (mssql+oracle+mongodb), got %v", jobs)
 	}
 	svc := map[string]bool{}
 	for _, j := range jobs {
 		svc[j.service] = true
 	}
-	if !svc["mssql"] || !svc["oracle"] {
-		t.Errorf("want mssql+oracle routed, got %v", svc)
+	if !svc["mssql"] || !svc["oracle"] || !svc["mongodb"] {
+		t.Errorf("want mssql+oracle+mongodb routed, got %v", svc)
 	}
 }
 
@@ -190,5 +191,14 @@ func TestOracleAuthAndServiceDetection(t *testing.T) {
 	}
 	if !isOracleServiceMissing(errors.New("ORA-12514: TNS:listener does not currently know of service requested")) {
 		t.Error("ORA-12514 should be detected as service-missing")
+	}
+}
+
+func TestMongoAuthFailureDetection(t *testing.T) {
+	if !isMongoAuthFailure(errors.New("auth error: (AuthenticationFailed) Authentication failed.")) {
+		t.Error("AuthenticationFailed should be an auth failure")
+	}
+	if isMongoAuthFailure(errors.New("server selection error: context deadline exceeded")) {
+		t.Error("connection/timeout error must not be treated as auth failure")
 	}
 }
