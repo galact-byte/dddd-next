@@ -19,6 +19,37 @@
 > - v0.1.14-gopocs-mongo: gopocs 协议 7→8——补 mongodb（mongo-driver v1.17，`SetAuth`(admin)+`Ping`，识别 code 18 AuthenticationFailed）；数据库爆破凑齐 mysql/pg/mssql/oracle/mongodb 五件套，自造 `mongodb.txt`（25 条），端口 27017 已在扫描覆盖；**无认证 mongodb 不误报**（无用户表→认证失败→留给 nuclei，与 redis 一致）；0 新增依赖（复用 nuclei 全家桶，tidy 转 direct）；gopocs 8 测全绿，16 包回归全绿
 > - v0.1.15-servicedetect: 缺口③端口服务指纹落地（原版 gonmap 的现代替代）——新增 `internal/discovery/servicedetect` 包装 praetorian fingerprintx（slow lane 识别**非标准端口**的服务，ssh@2222/redis@16379），覆盖 ssh/http/mysql/mssql/oracle/postgresql/redis/smb/rdp/telnet 等几十种；gopocs.Endpoint 加 Service 字段、routableJobs 改为"识别服务优先、端口号 fallback"，非标准端口也能爆破；pipeline 端口扫描后插服务识别喂下游；0 新增依赖（fingerprintx 复用 nuclei 全家桶，tidy 转 direct）；本地 httptest 随机端口实测识别 http；17 包回归全绿
 > - v0.1.16-gopocs-smb: gopocs 8→9，补 SMB 弱口令（go-smb2 NTLMv2，识别 STATUS_LOGON_FAILURE 等拒绝码，区分认证失败↔SMB1协商失败）——内网横向第一目标；端口 445 已在扫描覆盖、smb.txt 字典现成；0 新增依赖（go-smb2 复用 nuclei 全家桶，tidy 转 direct）；gopocs 10 测全绿，17 包回归全绿
+> - v0.1.17-ms17010: 永恒之蓝 MS17-010 探测落地——gopocs 新增"探测型 POC"框架(probes map，无 cred 单次探测，与弱口令 crackers 并行)；手写 SMB1 四步握手(negotiate→session→tree→trans)，解密原版 AES 藏的请求包保证字节一致，判断 0xC0000205 命中报 Critical；用 copy 修正原版全局 patch 的并发 race；nuclei 无此模板的真缺口、内网必备；SMB(445) 端点经 gopocs 自动触发；gopocs 11 测全绿，17 包回归全绿
+
+---
+
+## v0.1.17-ms17010 — 永恒之蓝 MS17-010 探测（gopocs 探测型 POC 框架）
+
+### 关键成果
+
+- **MS17-010（EternalBlue）探测**：nuclei 无此模板的真缺口（SMB 协议层），内网渗透必备的高危漏洞。手写 SMB1 四步握手（negotiate → session-setup → tree-connect → trans on `\PIPE\`），最终响应 `STATUS_INSUFF_SERVER_RESOURCES`(0xC0000205) 判定命中，报 Critical。
+- **gopocs 探测型 POC 框架**：新增 `probes map[string]ProbeFunc`，与弱口令 `crackers` 并行——`ProbeFunc` 是无 cred 的单次服务探测。SMB(445) 端点经 gopocs 自动触发 MS17010 探测 + 弱口令爆破，pipeline 无需改动；为后续 memcached/adb/jdwp 未授权类铺好框架。
+- **两处对原版的改进**：① 请求包 `copy` 后再 patch userID/treeID，修正原版直接改全局变量的并发 race；② 原版 AES 加密藏的请求包，解密为明文 hex 硬编码（去混淆，可读可审计）。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/ms17010.go`**：`probeMS17010` SMB1 四步探测（4 个明文请求包）+ `ms17010OS` 提取 OS banner。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：新增 `ProbeFunc` 类型 + `Engine.probes`；`New` 注册 smb→probeMS17010；`routableJobs` 收集"有 cracker 或 probe"的端点；`Run`→`handleEndpoint`（先探测后爆破）。
+- `internal/scanner/gopocs/gopocs_test.go`：新增 probe-only 路由测试。
+- `cmd/dddd/main.go`：版本 `0.1.16-dev → 0.1.17-dev`。
+- `README.md`：能力加 MS17-010 探测，Roadmap 相应更新。
+
+### 验证
+
+- gopocs 11 测全绿（含 probe-only 路由）；`go build` + `go test ./...` 17 包回归全绿。
+- 真实漏洞主机端到端未做（无 MS17010 靶机）；探测逻辑移植自原版已验证流程，请求包字节由解密原版包保证一致。
+
+### gopocs 能力（9 弱口令 + 1 探测 / 原版 17）
+
+弱口令：ssh/ftp/mysql/postgresql/redis/mssql/oracle/mongodb/smb。探测型：**MS17-010**。仍缺：rdp/telnet 弱口令、memcached/adb/jdwp/NetBIOS 未授权（shiro 已由 nuclei 覆盖）。
 
 ---
 
