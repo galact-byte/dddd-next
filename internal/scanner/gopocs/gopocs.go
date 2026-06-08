@@ -42,13 +42,14 @@ type Cracker interface {
 // handles it. Only ports listed here are brute-forced; everything else is left
 // to the HTTP probe. Copied into each Engine so callers/tests can override.
 var defaultServicePorts = map[int]string{
-	21:   "ftp",
-	22:   "ssh",
-	1433: "mssql",
-	1521: "oracle",
-	3306: "mysql",
-	5432: "postgresql",
-	6379: "redis",
+	21:    "ftp",
+	22:    "ssh",
+	1433:  "mssql",
+	1521:  "oracle",
+	3306:  "mysql",
+	5432:  "postgresql",
+	6379:  "redis",
+	27017: "mongodb",
 }
 
 // Endpoint is an open host:port discovered by the port scanner.
@@ -91,6 +92,7 @@ func New(opts Options) *Engine {
 			"ftp":        ftpCracker{},
 			"mssql":      mssqlCracker{},
 			"oracle":     oracleCracker{},
+			"mongodb":    mongodbCracker{},
 		},
 		servicePorts: defaultServicePorts,
 	}

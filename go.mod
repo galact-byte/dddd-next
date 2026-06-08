@@ -15,6 +15,7 @@ require (
 	github.com/projectdiscovery/uncover v1.2.1
 	github.com/redis/go-redis/v9 v9.11.0
 	github.com/sijms/go-ora/v2 v2.9.0
+	go.mongodb.org/mongo-driver v1.17.9
 	golang.org/x/crypto v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -374,7 +375,6 @@ require (
 	github.com/zmap/zgrab2 v0.1.8 // indirect
 	gitlab.com/gitlab-org/api/client-go v1.9.1 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect
-	go.mongodb.org/mongo-driver v1.17.9 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.62.0 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect

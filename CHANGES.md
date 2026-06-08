@@ -16,6 +16,37 @@
 > - v0.1.11-recon: 外部测绘 API 落地（uncover→fofa/hunter/quake）——搜索语法目标接入主编排，测绘资产复用端口扫描下游(host:port→探测+爆破)，内网/互联网两套场景在此统一；`.env` 密钥管理(gitignored + `.env.example` 模板 + `config.LoadDotEnv`)；**端到端揪出 uncover v1.2.0 的 hunter bug**(io.ReadAll 提前读空 resp.Body→Decode 必 EOF→吐空 Result)，升级 v1.2.1 修复；真实 Hunter 实测 `ip="1.1.1.1"` 返回 36 条带真实 ip/host/port 资产；15 包回归全绿
 > - v0.1.12-fingerpoc: 指纹→POC 精准联动落地（复刻原版 dddd 灵魂）——新增 `internal/scanner/pocmap` 撮合引擎（mapping.yaml 956 产品→legacy POC，`Resolve` 复刻原版 GetPocs + General-Poc 通用集 + 文件存在校验/去重），pipeline 默认精准模式只对指纹命中产品发对应 POC（`-full` 切全量、`-no-general` 关通用集）；**端到端揪出既有 httpprobe bug**——httpx 未设 `ResponseInStdout` 致 `Result.ResponseBody`/`RawHeaders` 恒空、`body=`/`header=` 指纹全部失效、精准模式空转，修复后本地 Liferay 靶标实测指纹命中→nuclei 从 13000+ 精准缩到 12 POC；16 包回归全绿
 > - v0.1.13-gopocs-db: gopocs 弱口令爆破扩容 5→7 协议——新增 mssql（go-mssqldb，ADO 风格 DSN 避开密码里 `@#!` 的 URL 转义，识别 error 18456 登录失败）+ oracle（go-ora `BuildUrl`，字典无 service name 故轮 `orcl`/`XE`/`ORCL` 默认服务，区分 ORA-01017 密码错↔ORA-12514 服务不存在）；端口 1433/1521 本就在扫描覆盖内，driver+字典全现成（复用 nuclei 全家桶依赖，**0 新增第三方依赖**，tidy 转 direct）；gopocs 7 测全绿（路由+auth/service 识别），16 包回归全绿
+> - v0.1.14-gopocs-mongo: gopocs 协议 7→8——补 mongodb（mongo-driver v1.17，`SetAuth`(admin)+`Ping`，识别 code 18 AuthenticationFailed）；数据库爆破凑齐 mysql/pg/mssql/oracle/mongodb 五件套，自造 `mongodb.txt`（25 条），端口 27017 已在扫描覆盖；**无认证 mongodb 不误报**（无用户表→认证失败→留给 nuclei，与 redis 一致）；0 新增依赖（复用 nuclei 全家桶，tidy 转 direct）；gopocs 8 测全绿，16 包回归全绿
+
+---
+
+## v0.1.14-gopocs-mongo — gopocs 补 mongodb（弱口令爆破 7 → 8 协议）
+
+### 关键成果
+
+- **mongodb 弱口令爆破落地**：`mongo-driver` 的 `SetAuth`（AuthSource=admin）+ `Ping` 触发认证，协议数 7 → 8，数据库爆破凑齐 mysql/postgresql/mssql/oracle/mongodb 五件套。`mongo-driver` 本就在 nuclei 全家桶依赖树，**0 新增第三方依赖**（tidy 转 direct）；端口 27017 已在端口扫描默认集内。
+- **无认证 mongodb 不误报**（语义关键）：无 `--auth` 的 mongodb 没有用户表，提供任何字典凭据连接都会因"用户不存在"返回 `AuthenticationFailed` → 不命中。所以弱口令爆破只对真有弱口令账户的实例报告；未授权 mongodb 留给 nuclei（与 redis cracker 一致）。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/mongodb.go`**：`mongo.Connect`（v1.17 带 ctx）+ `Ping`，`isMongoAuthFailure` 识别 code 18（AuthenticationFailed），区分认证失败（换凭据）与连接错误（放弃 endpoint）。
+- **`configs/dict/mongodb.txt`**：25 条 mongodb 常见弱口令（admin/root/mongo 等 × 常见密码）。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`crackers` 注册 mongodb；`defaultServicePorts` 加 27017→mongodb。
+- `internal/scanner/gopocs/gopocs_test.go`：路由测试加 27017；新增 mongo auth 识别测试。
+- `cmd/dddd/main.go`：版本 `0.1.13-dev → 0.1.14-dev`。
+- `go.mod`：`go.mongodb.org/mongo-driver` indirect → direct。
+
+### 验证
+
+- gopocs 8 测全绿（含 mongodb 路由 + auth 识别）；`go build` + `go test ./...` 16 包回归全绿。
+- 真实 mongodb 实例端到端未做（同 mssql/oracle，靠成熟 driver 库 + 错误识别单测 + 与现有 DB cracker 同范式保证）。
+
+### gopocs 协议全景（8）
+
+ssh / ftp / mysql / postgresql / redis / mssql / oracle / mongodb。仍缺：smb（NTLM）、telnet（无标准认证）、rdp。
 
 ---
 
