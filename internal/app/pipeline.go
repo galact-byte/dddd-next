@@ -347,7 +347,7 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 
 	var live []string
 	hits := make(map[string][]string)
-	n := 0
+	active, passive := 0, 0
 	for resp := range ch {
 		live = append(live, resp.URL)
 		_ = p.auditor.LogResponse(resp.URL, "http-probe", map[string]any{
@@ -359,10 +359,24 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 				fmt.Printf("[!] report: %v\n", werr)
 			}
 			hits[resp.URL] = append(hits[resp.URL], fp.Name)
-			n++
+			active++
+		}
+		// Passive fingerprints: httpx already ran wappalyzer (TechDetect) on the
+		// response we fetched. Surface those technologies and feed them to POC
+		// selection too — they catch products the active DSL rules miss.
+		for _, tech := range resp.Technologies {
+			if tech == "" {
+				continue
+			}
+			fp := types.Fingerprint{Name: tech, Target: resp.URL, Source: "wappalyzer", Confidence: 75}
+			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
+				fmt.Printf("[!] report: %v\n", werr)
+			}
+			hits[resp.URL] = append(hits[resp.URL], tech)
+			passive++
 		}
 	}
-	fmt.Printf("[*] live web: %d, fingerprint hits: %d\n", len(live), n)
+	fmt.Printf("[*] live web: %d, fingerprint hits: %d active + %d passive(tech)\n", len(live), active, passive)
 	return live, hits
 }
 
