@@ -19,6 +19,7 @@ import (
 	"dddd-next/internal/classifier"
 	"dddd-next/internal/config"
 	"dddd-next/internal/discovery/dnsx"
+	"dddd-next/internal/discovery/hostalive"
 	"dddd-next/internal/discovery/httpprobe"
 	"dddd-next/internal/discovery/portscan"
 	"dddd-next/internal/discovery/servicedetect"
@@ -157,6 +158,16 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 		fmt.Printf("[!] portscan: %v\n", err)
 		return nil
 	}
+
+	if p.cfg.PingFirst {
+		before := len(hosts)
+		hosts = hostalive.CheckLive(ctx, hosts, false)
+		fmt.Printf("[*] ICMP liveness: %d/%d host(s) responded\n", len(hosts), before)
+		if len(hosts) == 0 {
+			return nil
+		}
+	}
+
 	fmt.Printf("[*] port scanning %d host(s) x %d ports...\n", len(hosts), len(portscan.DefaultPorts))
 
 	sc := portscan.New(portscan.DefaultOptions())
