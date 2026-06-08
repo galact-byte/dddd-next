@@ -44,6 +44,7 @@ type Cracker interface {
 var defaultServicePorts = map[int]string{
 	21:    "ftp",
 	22:    "ssh",
+	445:   "smb",
 	1433:  "mssql",
 	1521:  "oracle",
 	3306:  "mysql",
@@ -96,6 +97,7 @@ func New(opts Options) *Engine {
 			"mssql":      mssqlCracker{},
 			"oracle":     oracleCracker{},
 			"mongodb":    mongodbCracker{},
+			"smb":        smbCracker{},
 		},
 		servicePorts: defaultServicePorts,
 	}

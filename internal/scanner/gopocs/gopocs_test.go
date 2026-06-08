@@ -221,3 +221,12 @@ func TestRoutableJobsUsesDetectedService(t *testing.T) {
 		t.Errorf("want ssh+redis routed by Service, got %v", svc)
 	}
 }
+
+func TestSMBAuthFailureDetection(t *testing.T) {
+	if !isSMBAuthFailure(errors.New("smb2: STATUS_LOGON_FAILURE")) {
+		t.Error("STATUS_LOGON_FAILURE should be an auth failure")
+	}
+	if isSMBAuthFailure(errors.New("dial tcp: connection refused")) {
+		t.Error("connection error must not be treated as auth failure")
+	}
+}

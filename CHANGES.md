@@ -18,6 +18,37 @@
 > - v0.1.13-gopocs-db: gopocs 弱口令爆破扩容 5→7 协议——新增 mssql（go-mssqldb，ADO 风格 DSN 避开密码里 `@#!` 的 URL 转义，识别 error 18456 登录失败）+ oracle（go-ora `BuildUrl`，字典无 service name 故轮 `orcl`/`XE`/`ORCL` 默认服务，区分 ORA-01017 密码错↔ORA-12514 服务不存在）；端口 1433/1521 本就在扫描覆盖内，driver+字典全现成（复用 nuclei 全家桶依赖，**0 新增第三方依赖**，tidy 转 direct）；gopocs 7 测全绿（路由+auth/service 识别），16 包回归全绿
 > - v0.1.14-gopocs-mongo: gopocs 协议 7→8——补 mongodb（mongo-driver v1.17，`SetAuth`(admin)+`Ping`，识别 code 18 AuthenticationFailed）；数据库爆破凑齐 mysql/pg/mssql/oracle/mongodb 五件套，自造 `mongodb.txt`（25 条），端口 27017 已在扫描覆盖；**无认证 mongodb 不误报**（无用户表→认证失败→留给 nuclei，与 redis 一致）；0 新增依赖（复用 nuclei 全家桶，tidy 转 direct）；gopocs 8 测全绿，16 包回归全绿
 > - v0.1.15-servicedetect: 缺口③端口服务指纹落地（原版 gonmap 的现代替代）——新增 `internal/discovery/servicedetect` 包装 praetorian fingerprintx（slow lane 识别**非标准端口**的服务，ssh@2222/redis@16379），覆盖 ssh/http/mysql/mssql/oracle/postgresql/redis/smb/rdp/telnet 等几十种；gopocs.Endpoint 加 Service 字段、routableJobs 改为"识别服务优先、端口号 fallback"，非标准端口也能爆破；pipeline 端口扫描后插服务识别喂下游；0 新增依赖（fingerprintx 复用 nuclei 全家桶，tidy 转 direct）；本地 httptest 随机端口实测识别 http；17 包回归全绿
+> - v0.1.16-gopocs-smb: gopocs 8→9，补 SMB 弱口令（go-smb2 NTLMv2，识别 STATUS_LOGON_FAILURE 等拒绝码，区分认证失败↔SMB1协商失败）——内网横向第一目标；端口 445 已在扫描覆盖、smb.txt 字典现成；0 新增依赖（go-smb2 复用 nuclei 全家桶，tidy 转 direct）；gopocs 10 测全绿，17 包回归全绿
+
+---
+
+## v0.1.16-gopocs-smb — gopocs 补 SMB 弱口令（8 → 9 协议）
+
+### 关键成果
+
+- **SMB 弱口令爆破**：`go-smb2` 的 `NTLMInitiator` + `DialContext` 做 NTLMv2 认证，命中即报。SMB（445）是内网横向移动的第一目标，弱口令直通文件共享 / 远程执行。**0 新增依赖**（go-smb2 本就在 nuclei 全家桶依赖树，tidy 转 direct）；端口 445 已在端口扫描默认集、`smb.txt` 字典现成。
+- **错误区分**：`isSMBAuthFailure` 只认 NTLM 拒绝状态码（STATUS_LOGON_FAILURE / ACCESS_DENIED / ACCOUNT_DISABLED / LOCKED_OUT / PASSWORD_EXPIRED）为"密码错→换凭据"；协议 / 连接错误（如 SMB1-only 协商失败）落到放弃 endpoint。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/smb.go`**：`net.DialTimeout` 建 TCP → `smb2.Dialer{Initiator: NTLMInitiator}.DialContext`，成功 `Logoff`；`isSMBAuthFailure` 识别 NTLM 拒绝码。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`crackers` 注册 smb；`defaultServicePorts` 加 445→smb。
+- `internal/scanner/gopocs/gopocs_test.go`：新增 SMB auth 识别测试。
+- `cmd/dddd/main.go`：版本 `0.1.15-dev → 0.1.16-dev`。
+- `README.md`：弱口令协议 8 → 9（加 SMB），Roadmap 待补协议相应减少。
+- `go.mod`：`projectdiscovery/go-smb2` indirect → direct。
+
+### 验证
+
+- gopocs 10 测全绿（含 SMB auth 识别）；`go build` + `go test ./...` 17 包回归全绿。
+- 真实 SMB server 端到端未做（同其他 DB cracker，靠 go-smb2 库 + 拒绝码识别单测 + 同范式保证）。
+
+### gopocs 协议（9 / 原版 17）
+
+ssh / ftp / mysql / postgresql / redis / mssql / oracle / mongodb / **smb**。仍缺：rdp / telnet / netbios / memcached / adb / jdwp / ms17010(漏洞) / shiro(Web)。
 
 ---
 
