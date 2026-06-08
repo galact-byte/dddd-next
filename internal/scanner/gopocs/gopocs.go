@@ -52,6 +52,7 @@ var defaultServicePorts = map[int]string{
 	1433:  "mssql",
 	1521:  "oracle",
 	3306:  "mysql",
+	3389:  "rdp",
 	5432:  "postgresql",
 	5555:  "adb",
 	6379:  "redis",
@@ -105,6 +106,7 @@ func New(opts Options) *Engine {
 			"oracle":     oracleCracker{},
 			"mongodb":    mongodbCracker{},
 			"smb":        smbCracker{},
+			"rdp":        rdpCracker{},
 		},
 		probes: map[string]ProbeFunc{
 			"smb":       probeMS17010,

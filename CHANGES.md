@@ -21,6 +21,38 @@
 > - v0.1.16-gopocs-smb: gopocs 8→9，补 SMB 弱口令（go-smb2 NTLMv2，识别 STATUS_LOGON_FAILURE 等拒绝码，区分认证失败↔SMB1协商失败）——内网横向第一目标；端口 445 已在扫描覆盖、smb.txt 字典现成；0 新增依赖（go-smb2 复用 nuclei 全家桶，tidy 转 direct）；gopocs 10 测全绿，17 包回归全绿
 > - v0.1.17-ms17010: 永恒之蓝 MS17-010 探测落地——gopocs 新增"探测型 POC"框架(probes map，无 cred 单次探测，与弱口令 crackers 并行)；手写 SMB1 四步握手(negotiate→session→tree→trans)，解密原版 AES 藏的请求包保证字节一致，判断 0xC0000205 命中报 Critical；用 copy 修正原版全局 patch 的并发 race；nuclei 无此模板的真缺口、内网必备；SMB(445) 端点经 gopocs 自动触发；gopocs 11 测全绿，17 包回归全绿
 > - v0.1.18-unauth: gopocs 补 3 类未授权/RCE 探测——复用探测型 POC 框架(probes)：memcached(stats→STAT,High)、adb(CNXN 握手→安卓调试桥 RCE 等价,Critical)、jdwp(JDWP-Handshake 回显→Java 调试 RCE,Critical)；端口 5555(adb) 补入扫描默认集、jdwp 靠 fingerprintx 识别路由；均为 nuclei 不覆盖的网络层未授权；原版 17 gopocs 协议已覆盖 13(缺 rdp/telnet/NetBIOS，shiro 由 nuclei 覆盖)；gopocs 12 测全绿，17 包回归全绿
+> - v0.1.19-rdp: gopocs 弱口令 9→10，补 RDP（远程桌面 3389 内网高价值）——引入 grdp(replace 到 shadow1ng/grdp v1.0.3，fscan 同款 fork)，NTLMv2 over tpkt/x224/t125/sec/pdu 协议栈；用 sync.Once+channel 替代原版 WaitGroup+breakFlag(无 race)+ctx/超时保护；**首次新增第三方依赖(主人确认，RDP 旧工具能发现的不漏)**；端口 3389 已在扫描覆盖、rdp.txt 现成；原版 17 协议已覆盖 14；gopocs 13 测全绿，17 包回归全绿
+
+---
+
+## v0.1.19-rdp — gopocs 补 RDP 弱口令（9 → 10 协议）
+
+### 关键成果
+
+- **RDP 弱口令爆破**：远程桌面（3389）是内网横向高价值目标。移植原版基于 `grdp` 的 NTLMv2 认证流程（tpkt → x224 → t125 → sec → pdu 协议栈），登录成功即报 Critical。
+- **首次新增第三方依赖**（经用户确认）：引入 `github.com/tomatome/grdp v0.1.0`，replace 到 `github.com/shadow1ng/grdp v1.0.3`（fscan 同款 fork，与原版 rdp.go API 一致）。这是 dddd-next 至今唯一为补全功能新增的依赖——RDP 弱口令是 nuclei 不做、旧工具能发现的内网必备项，权衡后认为值得。
+- **对原版的改进**：grdp 用事件回调（success/ready vs error/close）报告结果，dddd-next 用 `sync.Once`+channel 桥接（替代原版 `WaitGroup`+`breakFlag`，无 race），并加 ctx/超时防止静默服务挂起 goroutine。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/rdp.go`**：`rdpCracker` + `rdpLogin`（grdp NTLMv2 协议栈，事件→error 桥接 + 超时）。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`crackers` 注册 rdp；`defaultServicePorts` 加 3389→rdp。
+- `internal/scanner/gopocs/gopocs_test.go`：新增 RDP 路由测试。
+- `cmd/dddd/main.go`：版本 `0.1.18-dev → 0.1.19-dev`。
+- `README.md`：弱口令 9 → 10，差异表 replace 说明更新为 2 个，Roadmap 更新。
+- `go.mod`：新增 `tomatome/grdp` require + replace 到 `shadow1ng/grdp v1.0.3`。
+
+### 验证
+
+- gopocs 13 测全绿（含 RDP 路由）；`go build` + `go test ./...` 17 包回归全绿。
+- 真实 RDP server 端到端未做（无靶机）；认证流程移植自原版已验证代码，grdp API 一致。
+
+### gopocs 覆盖（原版 17 协议已覆盖 14）
+
+弱口令 10：ssh/ftp/mysql/postgresql/redis/mssql/oracle/mongodb/smb/rdp。探测型 4：ms17010/memcached/adb/jdwp。仍缺：telnet 弱口令、NetBIOS（shiro 由 nuclei 覆盖）。
 
 ---
 
