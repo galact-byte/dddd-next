@@ -7,6 +7,7 @@ require (
 	github.com/jlaffaye/ftp v0.0.0-20190624084859-c1312a7102bf
 	github.com/lib/pq v1.11.2
 	github.com/microsoft/go-mssqldb v1.9.2
+	github.com/praetorian-inc/fingerprintx v1.1.15
 	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/goflags v0.1.74
 	github.com/projectdiscovery/httpx v1.9.0
@@ -272,7 +273,6 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/praetorian-inc/fingerprintx v1.1.15 // indirect
 	github.com/projectdiscovery/asnmap v1.1.1 // indirect
 	github.com/projectdiscovery/awesome-search-queries v0.0.0-20260104120501-961ef30f7193 // indirect
 	github.com/projectdiscovery/blackrock v0.0.1 // indirect

@@ -202,3 +202,22 @@ func TestMongoAuthFailureDetection(t *testing.T) {
 		t.Error("connection/timeout error must not be treated as auth failure")
 	}
 }
+
+func TestRoutableJobsUsesDetectedService(t *testing.T) {
+	e := New(DefaultOptions(""))
+	jobs := e.routableJobs([]Endpoint{
+		{Host: "1.2.3.4", Port: 2222, Service: "ssh"},    // ssh on a non-standard port
+		{Host: "1.2.3.4", Port: 16379, Service: "redis"}, // redis on a non-standard port
+		{Host: "1.2.3.4", Port: 8080, Service: "http"},   // http: no cracker, skipped
+	})
+	if len(jobs) != 2 {
+		t.Fatalf("want 2 jobs (ssh+redis routed by detected service), got %v", jobs)
+	}
+	svc := map[string]bool{}
+	for _, j := range jobs {
+		svc[j.service] = true
+	}
+	if !svc["ssh"] || !svc["redis"] {
+		t.Errorf("want ssh+redis routed by Service, got %v", svc)
+	}
+}

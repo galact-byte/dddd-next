@@ -17,6 +17,40 @@
 > - v0.1.12-fingerpoc: 指纹→POC 精准联动落地（复刻原版 dddd 灵魂）——新增 `internal/scanner/pocmap` 撮合引擎（mapping.yaml 956 产品→legacy POC，`Resolve` 复刻原版 GetPocs + General-Poc 通用集 + 文件存在校验/去重），pipeline 默认精准模式只对指纹命中产品发对应 POC（`-full` 切全量、`-no-general` 关通用集）；**端到端揪出既有 httpprobe bug**——httpx 未设 `ResponseInStdout` 致 `Result.ResponseBody`/`RawHeaders` 恒空、`body=`/`header=` 指纹全部失效、精准模式空转，修复后本地 Liferay 靶标实测指纹命中→nuclei 从 13000+ 精准缩到 12 POC；16 包回归全绿
 > - v0.1.13-gopocs-db: gopocs 弱口令爆破扩容 5→7 协议——新增 mssql（go-mssqldb，ADO 风格 DSN 避开密码里 `@#!` 的 URL 转义，识别 error 18456 登录失败）+ oracle（go-ora `BuildUrl`，字典无 service name 故轮 `orcl`/`XE`/`ORCL` 默认服务，区分 ORA-01017 密码错↔ORA-12514 服务不存在）；端口 1433/1521 本就在扫描覆盖内，driver+字典全现成（复用 nuclei 全家桶依赖，**0 新增第三方依赖**，tidy 转 direct）；gopocs 7 测全绿（路由+auth/service 识别），16 包回归全绿
 > - v0.1.14-gopocs-mongo: gopocs 协议 7→8——补 mongodb（mongo-driver v1.17，`SetAuth`(admin)+`Ping`，识别 code 18 AuthenticationFailed）；数据库爆破凑齐 mysql/pg/mssql/oracle/mongodb 五件套，自造 `mongodb.txt`（25 条），端口 27017 已在扫描覆盖；**无认证 mongodb 不误报**（无用户表→认证失败→留给 nuclei，与 redis 一致）；0 新增依赖（复用 nuclei 全家桶，tidy 转 direct）；gopocs 8 测全绿，16 包回归全绿
+> - v0.1.15-servicedetect: 缺口③端口服务指纹落地（原版 gonmap 的现代替代）——新增 `internal/discovery/servicedetect` 包装 praetorian fingerprintx（slow lane 识别**非标准端口**的服务，ssh@2222/redis@16379），覆盖 ssh/http/mysql/mssql/oracle/postgresql/redis/smb/rdp/telnet 等几十种；gopocs.Endpoint 加 Service 字段、routableJobs 改为"识别服务优先、端口号 fallback"，非标准端口也能爆破；pipeline 端口扫描后插服务识别喂下游；0 新增依赖（fingerprintx 复用 nuclei 全家桶，tidy 转 direct）；本地 httptest 随机端口实测识别 http；17 包回归全绿
+
+---
+
+## v0.1.15-servicedetect — 端口服务指纹（缺口③，gonmap 的现代替代）
+
+### 关键成果
+
+- **端口服务指纹落地**：`internal/discovery/servicedetect` 包装 `praetorian-inc/fingerprintx`，对端口扫描发现的开放端口识别真实服务（ssh/http/mysql/mssql/oracle/postgresql/redis/smb/rdp/telnet/ldap/vnc/snmp... 几十种）。**0 新增依赖**（fingerprintx 本就在 nuclei 全家桶依赖树，tidy 转 direct）。这是原版 dddd `lib/gonmap` 的现代化替代。
+- **核心价值：非标准端口识别 + 智能路由**：用 fingerprintx 的 slow lane（`FastMode=false`，遍历所有插件而非只看默认端口映射），ssh 跑 2222、redis 跑 16379 也能识别。gopocs 的 `routableJobs` 改为**识别服务优先、端口号 fallback**，非标准端口的服务也能被弱口令爆破——以前只能靠端口号（22→ssh）猜，现在靠实际指纹。
+
+### 新增文件
+
+- **`internal/discovery/servicedetect/servicedetect.go`**：`Detect(ctx, endpoints)` worker-pool 并发对每个开放端口 `SimpleScanTarget`，输出 `Result{Host,Port,Service,Version,TLS}`；`resolveAddr` 把 IP/域名转 `netip.Addr`（fingerprintx 需 IP）。
+- **`servicedetect_test.go`**：`resolveAddr`（IP/IPv6 literal）+ 本地 httptest 随机端口端到端识别 http（验证非标准端口识别）。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`Endpoint` 加 `Service` 字段；`routableJobs` 识别服务优先、端口号 fallback。
+- `internal/scanner/gopocs/gopocs_test.go`：新增 service 路由测试（ssh@2222/redis@16379 按识别服务路由）。
+- `internal/app/pipeline.go`：端口扫描后插 `detectServices` 阶段，结果喂 gopocs 路由 + audit log；`bruteForce` 接收服务映射填 `Endpoint.Service`。
+- `cmd/dddd/main.go`：版本 `0.1.14-dev → 0.1.15-dev`。
+- `go.mod`：`praetorian-inc/fingerprintx` indirect → direct。
+
+### 验证
+
+- servicedetect 2 测（resolveAddr + 本地 httptest 端到端识别 http）；gopocs service 路由测试；`go build` + `go test ./...` 17 包回归全绿。
+- 核心能力（非标准端口识别）由 httptest 随机端口端到端验证；fingerprintx 不识别 mongodb（无该插件），27017 走 gopocs 端口号 fallback 兜底。
+
+### 注意 / 后续
+
+- 服务识别结果当前走 audit log + 控制台（不写主报告，保持 Finding 漏洞语义）；后续可加 asset 维度报告。
+- slow lane 对"开放但无响应"的端口会逐插件等满 timeout，已用并发缓解；实战开放端口通常有响应。
+- HTTP 探测仍对所有 host:port 进行（未按识别服务过滤），可后续只探测 http/https 端口。
 
 ---
 
