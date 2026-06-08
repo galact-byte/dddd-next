@@ -4,7 +4,7 @@
 
 `dddd-next` 是对原 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 项目的现代化重写。原项目自 2024 年后基本停更，但其依赖的 `nuclei`、`httpx`、`subfinder` 等仍在快速迭代，内置 POC 也已老化。本项目在保留 dddd 设计哲学的基础上，采用现代 Go 标准结构重构，依赖直接跟随 projectdiscovery 主线版本。
 
-> **当前状态**：核心扫描链路已全部打通，工程质量（依赖管理 / 结构 / 测试）已超越原版；功能广度约为原版的 60%，仍在对齐中（见下方 Roadmap）。
+> **当前状态**：核心扫描链路已全部打通，工程质量（依赖管理 / 结构 / 测试）已超越原版；功能广度约为原版的 65%，仍在对齐中（见下方 Roadmap）。
 
 ## 与原项目的差异（全栈升级）
 
@@ -16,7 +16,7 @@
 | 项目结构 | 扁平（common / lib / gopocs） | 标准 Go（cmd / internal / pkg） |
 | 配置注入 | 全局变量 `structs.GlobalConfig` | CLI flag（标准库）+ context |
 | 错误处理 | 大量 panic / log.Fatal | error 链 + context 取消 |
-| 测试 | 基本无 | 17 包单元测试全绿 |
+| 测试 | 基本无 | 18 包单元测试全绿 |
 
 ## 已实现能力
 
@@ -26,9 +26,9 @@
 - 自研 TCP 端口扫描 + 服务指纹识别（fingerprintx，可识别非标准端口上的服务）
 - 指纹 → POC 智能映射（只对命中产品发对应 POC，避免无效请求）
 - Nuclei v3 漏洞扫描（默认指纹精准模式，`-full` 切全量）
-- 弱口令爆破 **10 种**：SSH / FTP / MySQL / PostgreSQL / Redis / MSSQL / Oracle / MongoDB / SMB / RDP
+- 弱口令爆破 **11 种**：SSH / FTP / MySQL / PostgreSQL / Redis / MSSQL / Oracle / MongoDB / SMB / RDP / Telnet
 - 漏洞探测：MS17-010（EternalBlue 永恒之蓝）SMB 远程命令执行
-- 未授权访问探测：memcached / ADB（安卓调试桥，RCE 等价）/ JDWP（Java 调试，RCE 等价）
+- 未授权访问探测：memcached / ADB（安卓调试桥，RCE 等价）/ JDWP（Java 调试，RCE 等价）/ Telnet（直进 shell）
 - Hunter / Fofa / Quake 测绘 API（`.env` 管理密钥）
 - TXT / JSON / HTML 三种报告 + 审计日志
 
@@ -36,7 +36,7 @@
 
 为达成对原版的完整功能复刻，仍需补齐：
 
-- **gopocs 协议**（原版 17 种，已覆盖 14 / 缺 2）：telnet 弱口令、NetBIOS 信息收集（shiro 已由 nuclei 模板覆盖）
+- **gopocs 协议**（原版 17 种，已覆盖 15 / 缺 NetBIOS 信息收集，shiro 已由 nuclei 模板覆盖）
 - **被动指纹识别**（当前仅主动）
 - **ICMP 存活探测**
 - **CDN 识别与过滤**
