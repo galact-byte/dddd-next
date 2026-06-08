@@ -25,6 +25,41 @@
 > - v0.1.20-telnet: gopocs 协议覆盖 14→15，补 telnet（弱口令爆破 + 未授权访问探测）——移植原版 telnetlib 协议栈为子包(精简掉几十个未用 option 常量)，`probeTelnet` 报未授权直进 shell(Critical)、`telnetCracker` 按 MakeServerType 判定的"仅密码/用户名+密码"两种模式爆破；**对原版的改进**：原版 `LastResponse` 跨 goroutine 无锁读写(数据竞争)，补 mutex 修掉；banner 读取的固定 3s/5s sleep 刻意不被 timeout 截断(否则慢速 banner 漏报)；端口 23 已在扫描覆盖、telnet.txt 现成；0 新增依赖；telnetlib 检测大脑(MakeServerType/isLoginFailed)单测全绿，gopocs 14 测全绿，18 包回归全绿
 > - v0.1.21-icmp: 缺口④ ICMP 存活探测落地——新增 `internal/discovery/hostalive`，`-ping` flag 开启后对 CIDR/IP段先 ICMP 预筛、只扫存活主机(大网段提速)；**默认关闭**(遵循"不能漏"：封 ICMP 但开端口的加固主机不能因预筛被丢)；两级策略 raw ICMP 监听(0 新增依赖，x/net/icmp 转 direct)→系统 ping 命令(无特权兜底)；**修原版 3 个隐患**：Windows `ping -w 1`(1ms 超时几乎必漏)→`-w 1000`、用 stdout 含 `ttl=` 判定(替代 Windows 不可靠退出码+原版 /bin/bash shell 技巧)、Windows 用 System32\ping.exe 绝对路径(规避 PATH 里 python ping.py 劫持，实测揪出)；loopback 端到端实测预筛生效；19 包回归全绿
 > - v0.1.22-passive-fp: 缺口⑤ 被动指纹识别落地——**揪出既有缺陷**：`TechDetect:true` 早已开启、httpx wappalyzer 也跑了、`resp.Technologies` 也填充了，但从头到尾**被静默丢弃**(`ToFingerprintContext` 不含它)；本次将被动技术栈接入报告(Source=wappalyzer,confidence=75)+ 喂给 pocmap 选 POC(指纹→更多针对性 POC→发现更多问题)；本地 WordPress/jQuery/Bootstrap 靶标端到端实测 `5 active + 7 passive`，被动额外识别出主动漏掉的 MySQL/PHP 且带版本号(Python:3.14.4/WordPress:6.4.2)；0 新增依赖、0 新增文件(仅 pipeline 接线)；19 包回归全绿
+> - v0.1.23-cdn: 缺口⑥ CDN 识别落地——新增 `internal/discovery/cdn`，移植原版 271 条中文 CNAME 后缀库(阿里/腾讯/网宿/百度/华为…httpx IP 段 cdncheck 覆盖不到的)+cdn/waf 关键字+已知 CDN IP；**对原版的全栈升级**：①默认**标记但仍探测**(原版默认跳过)——dddd-next 对域名只 HTTP 探测不端口扫描，透过 CDN 仍触达真实应用，跳过反而漏；`-skip-cdn` 显式排除；②**剔除原版 IPv6/多 IP 启发式**(会误杀合法目标→漏报)，只保留高精度信号；③修原版 `LookupCNAME` 无 failover 的 bug；CDN 命中写报告(Source=cdn)；localtest.me 端到端实测路径生效；0 新增依赖(miekg/dns 转 direct)；cdn 匹配逻辑单测全绿，20 包回归全绿
+
+---
+
+## v0.1.23-cdn — CDN 识别与过滤（缺口⑥）
+
+### 关键成果
+
+- **CNAME 后缀库识别**：移植原版 271 条 CDN/WAF CNAME 库（阿里云/腾讯云/网宿/百度/华为/金山/又拍/七牛… + Akamai/Cloudflare/AWS/Fastly 等），按域名解析的 CNAME 链匹配。
+- **核心价值**：这套**中文 CDN 库是 httpx 内置 cdncheck（偏全球 CDN 的 IP 段匹配）覆盖不到的**——国内实战必备。
+- **CDN 命中写入报告**（`Source=cdn`，`Confidence=80`）+ 审计日志，告知操作者"解析到的是 CDN 边缘 IP、不是源站"。
+
+### 对原版的 3 处全栈升级
+
+1. **默认标记但仍探测**（原版默认**跳过** CDN，`-ac` 才扫）：dddd-next 对域名只做 HTTP 探测、不端口扫描，而**透过 CDN 探测仍能触达真实应用**——默认跳过反而会漏掉 CDN 后的应用问题，违背"不能漏"。改为默认识别+标记+仍探测，`-skip-cdn` 显式排除（给想只看源站的用户）。
+2. **剔除误杀启发式**：原版把"任意 IPv6 域名""多 IP 解析+有 CNAME"也判为 CDN——这俩会误杀合法目标，而 CDN 判定可能导致排除扫描 = 漏报。dddd-next 只保留高精度信号（已知 CDN IP / 已知 CDN CNAME 后缀 / cdn-waf 关键字）。
+3. **修 failover bug**：原版 `LookupCNAME` 循环里无条件 `return`，只查首个 DNS 服务器（后续 server 永不生效）；dddd-next 改为首个响应成功者胜、其余失败则继续。
+
+### 新增文件
+
+- **`internal/discovery/cdn/cdn.go`**：`Check`（解析+CNAME 链查询+匹配）、`matchByCNAME`/`matchByIP`（纯函数，可单测）、271 条 CNAME 库 + 已知 CDN IP；CNAME 查询用 miekg/dns 多服务器 failover。
+- **`internal/discovery/cdn/cdn_test.go`**：CNAME 库匹配（阿里/腾讯/网宿/cloudfront/关键字/大小写）、IP 匹配，全程无网络。
+
+### 修改文件
+
+- `internal/config/config.go`：Config 加 `SkipCDN` 字段、注册 `-skip-cdn` flag。
+- `internal/app/pipeline.go`：新增 `identifyCDN`（并发检测、写报告、按 `-skip-cdn` 过滤），Run 在 resolveDomains 前调用。
+- `cmd/dddd/main.go`：版本 `0.1.22-dev → 0.1.23-dev`。
+- `go.mod`：`github.com/miekg/dns` indirect → direct。
+- `README.md`：已实现能力加 CDN 识别，Roadmap 移除该项。
+
+### 验证
+
+- cdn 匹配逻辑单测全绿（无网络）；`go build` + `go test ./...` 20 包回归全绿。
+- `dddd-next -t localtest.me`（解析到 127.0.0.1，不碰外部主机）端到端实测：`CDN identification on 1 domain(s)` → `CDN: 0 flagged (still probed)` → 正常解析探测，CDN 域名路径与 DNS 查询全程打通。
 
 ---
 

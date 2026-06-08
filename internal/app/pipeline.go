@@ -14,10 +14,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"dddd-next/internal/audit"
 	"dddd-next/internal/classifier"
 	"dddd-next/internal/config"
+	"dddd-next/internal/discovery/cdn"
 	"dddd-next/internal/discovery/dnsx"
 	"dddd-next/internal/discovery/hostalive"
 	"dddd-next/internal/discovery/httpprobe"
@@ -88,6 +90,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	if p.cfg.Subdomain && len(domains) > 0 {
 		domains = p.enumerateSubdomains(ctx, domains)
+	}
+	if len(domains) > 0 {
+		domains = p.identifyCDN(ctx, domains)
 	}
 	if len(domains) > 0 {
 		probeInputs = append(probeInputs, p.resolveDomains(ctx, domains)...)
@@ -305,6 +310,56 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 	}
 	fmt.Printf("[*] subdomains: %d total\n", len(out))
 	return out
+}
+
+// identifyCDN flags domains that resolve through a CDN/WAF and records the
+// provider. The resolved edge IP is not the origin, so this warns the operator
+// not to attack it directly. By default flagged domains are still probed —
+// probing through a CDN still reaches the real app, so dropping them would miss
+// findings. -skip-cdn excludes them for operators who want only origin infra.
+func (p *Pipeline) identifyCDN(ctx context.Context, domains []string) []string {
+	fmt.Printf("[*] CDN identification on %d domain(s)...\n", len(domains))
+
+	results := make([]cdn.Result, len(domains))
+	sem := make(chan struct{}, 20)
+	var wg sync.WaitGroup
+	for i, d := range domains {
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return domains // cancelled: don't drop anything
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func(i int, d string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			results[i] = cdn.Check(d)
+		}(i, d)
+	}
+	wg.Wait()
+
+	keep := make([]string, 0, len(domains))
+	flagged := 0
+	for i, d := range domains {
+		if results[i].IsCDN {
+			flagged++
+			_ = p.auditor.LogInfo("cdn", map[string]any{"domain": d, "provider": results[i].Provider})
+			_ = p.reporter.WriteFingerprint(d, types.Fingerprint{
+				Name: "CDN: " + results[i].Provider, Target: d, Source: "cdn", Confidence: 80,
+			})
+			if p.cfg.SkipCDN {
+				continue
+			}
+		}
+		keep = append(keep, d)
+	}
+	if p.cfg.SkipCDN {
+		fmt.Printf("[*] CDN: %d flagged and dropped (-skip-cdn), %d kept\n", flagged, len(keep))
+	} else {
+		fmt.Printf("[*] CDN: %d flagged (still probed; -skip-cdn to exclude)\n", flagged)
+	}
+	return keep
 }
 
 // resolveDomains keeps only domains that resolve to at least one IP and records

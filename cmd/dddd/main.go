@@ -20,7 +20,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.22-dev"
+	appVersion = "0.1.23-dev"
 )
 
 func main() {

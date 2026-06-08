@@ -7,6 +7,7 @@ require (
 	github.com/jlaffaye/ftp v0.0.0-20190624084859-c1312a7102bf
 	github.com/lib/pq v1.11.2
 	github.com/microsoft/go-mssqldb v1.9.2
+	github.com/miekg/dns v1.1.68
 	github.com/praetorian-inc/fingerprintx v1.1.15
 	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/go-smb2 v0.0.0-20240129202741-052cc450c6cb
@@ -249,7 +250,6 @@ require (
 	github.com/mholt/acmez/v3 v3.1.3 // indirect
 	github.com/mholt/archives v0.1.5 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
-	github.com/miekg/dns v1.1.68 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.1 // indirect
 	github.com/minio/selfupdate v0.6.1-0.20230907112617-f11e74f84ca7 // indirect
