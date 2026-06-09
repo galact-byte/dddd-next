@@ -28,8 +28,9 @@ type Config struct {
 	HTMLOutput string
 	AuditLog   bool
 
-	Subdomain bool
-	ProxyURL  string
+	Subdomain  bool
+	NoSubBrute bool
+	ProxyURL   string
 
 	PingFirst bool
 	SkipCDN   bool
@@ -90,6 +91,7 @@ func ParseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.AuditLog, "a", cfg.AuditLog, "enable audit log (audit.log)")
 
 	fs.BoolVar(&cfg.Subdomain, "sd", cfg.Subdomain, "enumerate subdomains for domain targets")
+	fs.BoolVar(&cfg.NoSubBrute, "nsb", cfg.NoSubBrute, "skip active subdomain brute-force (passive subfinder only) under -sd")
 	fs.StringVar(&cfg.ProxyURL, "proxy", cfg.ProxyURL, "HTTP/SOCKS5 proxy URL for outgoing requests")
 
 	fs.BoolVar(&cfg.PingFirst, "ping", cfg.PingFirst, "ICMP-ping hosts first and only port-scan those that reply (faster on large ranges; skips ICMP-blocking hosts)")

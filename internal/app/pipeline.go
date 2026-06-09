@@ -26,6 +26,7 @@ import (
 	"dddd-next/internal/discovery/httpprobe"
 	"dddd-next/internal/discovery/portscan"
 	"dddd-next/internal/discovery/servicedetect"
+	"dddd-next/internal/discovery/subbrute"
 	"dddd-next/internal/discovery/subfinder"
 	"dddd-next/internal/discovery/uncover"
 	"dddd-next/internal/fingerprint"
@@ -299,26 +300,34 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 
 func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []string {
 	fmt.Printf("[*] subdomain enumeration for %d domain(s)...\n", len(domains))
-	opts := subfinder.DefaultOptions()
-	opts.Domains = domains
-	opts.Proxy = p.cfg.ProxyURL
-
-	results, errCh, err := subfinder.New(opts).Run(ctx)
-	if err != nil {
-		fmt.Printf("[!] subfinder: %v\n", err)
-		return domains
-	}
 
 	set := make(map[string]struct{}, len(domains))
 	for _, d := range domains {
 		set[d] = struct{}{}
 	}
-	for r := range results {
-		set[r.Host] = struct{}{}
+
+	// Active brute-force first — it catches subdomains absent from passive
+	// sources, the whole reason not to rely on subfinder alone.
+	if !p.cfg.NoSubBrute {
+		for _, h := range p.subdomainBrute(ctx, domains) {
+			set[h] = struct{}{}
+		}
 	}
-	for e := range errCh {
-		if e != nil {
-			fmt.Printf("[!] subfinder: %v\n", e)
+
+	opts := subfinder.DefaultOptions()
+	opts.Domains = domains
+	opts.Proxy = p.cfg.ProxyURL
+	results, errCh, err := subfinder.New(opts).Run(ctx)
+	if err != nil {
+		fmt.Printf("[!] subfinder: %v\n", err) // keep brute results; don't abort enum
+	} else {
+		for r := range results {
+			set[r.Host] = struct{}{}
+		}
+		for e := range errCh {
+			if e != nil {
+				fmt.Printf("[!] subfinder: %v\n", e)
+			}
 		}
 	}
 
@@ -328,6 +337,48 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 	}
 	fmt.Printf("[*] subdomains: %d total\n", len(out))
 	return out
+}
+
+// subdomainBrute resolves "<word>.<domain>" candidates from the wordlist and
+// keeps those that answer. Domains with wildcard DNS (a sentinel label still
+// resolves) are skipped — otherwise every word "resolves" and floods the scan
+// with non-existent hosts.
+func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []string {
+	words, err := subbrute.LoadWordlist(filepath.Join(p.configDir, "dict", "subdomains.txt"))
+	if err != nil {
+		fmt.Printf("[!] subbrute: %v; skipping brute-force\n", err)
+		return nil
+	}
+
+	r, err := dnsx.New(dnsx.DefaultOptions())
+	if err != nil {
+		fmt.Printf("[!] subbrute dnsx: %v; skipping brute-force\n", err)
+		return nil
+	}
+
+	var bruteable []string
+	for _, d := range domains {
+		if ips, _ := r.Resolve("zzqx9k7wildcardprobe." + d); len(ips) > 0 {
+			fmt.Printf("[*] subbrute: %s has wildcard DNS, skipping brute-force\n", d)
+			continue
+		}
+		bruteable = append(bruteable, d)
+	}
+	if len(bruteable) == 0 {
+		return nil
+	}
+
+	candidates := subbrute.Candidates(bruteable, words)
+	fmt.Printf("[*] subbrute: resolving %d candidate(s) across %d domain(s)...\n", len(candidates), len(bruteable))
+
+	var found []string
+	for res := range r.ResolveMany(ctx, candidates) {
+		if res.Err == "" && len(res.IPs) > 0 {
+			found = append(found, res.Host)
+		}
+	}
+	fmt.Printf("[*] subbrute: %d subdomain(s) resolved\n", len(found))
+	return found
 }
 
 // identifyCDN flags domains that resolve through a CDN/WAF and records the
