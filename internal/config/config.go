@@ -34,6 +34,7 @@ type Config struct {
 	PingFirst bool
 	SkipCDN   bool
 	SkipDir   bool
+	Ports     string
 
 	FullScan          bool
 	DisableGeneralPoc bool
@@ -94,6 +95,7 @@ func ParseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.PingFirst, "ping", cfg.PingFirst, "ICMP-ping hosts first and only port-scan those that reply (faster on large ranges; skips ICMP-blocking hosts)")
 	fs.BoolVar(&cfg.SkipCDN, "skip-cdn", cfg.SkipCDN, "skip probing domains identified as CDN/WAF-fronted (default: identify and flag, but still probe)")
 	fs.BoolVar(&cfg.SkipDir, "no-dir", cfg.SkipDir, "skip probing well-known product paths (/nacos/, /druid/, ...) on live web roots")
+	fs.StringVar(&cfg.Ports, "p", cfg.Ports, "ports to scan: comma list / a-b ranges (\"80,443,8000-8100\") or \"all\" for 1-65535; empty uses the curated default set")
 
 	fs.BoolVar(&cfg.FullScan, "full", cfg.FullScan, "run all nuclei templates instead of fingerprint-matched POCs")
 	fs.BoolVar(&cfg.DisableGeneralPoc, "no-general", cfg.DisableGeneralPoc, "skip the product-independent General-Poc set in precise mode")

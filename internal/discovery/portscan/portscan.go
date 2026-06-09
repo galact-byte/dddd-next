@@ -35,6 +35,55 @@ var DefaultPorts = []int{
 // memory before the scan even starts.
 const maxExpand = 1 << 20
 
+// ParsePortSpec turns a CLI port spec into a port list. It accepts a
+// comma-separated mix of single ports and a-b ranges ("80,443,8000-8100"), or
+// the keywords "all"/"full" for the whole 1-65535 range. An empty spec returns
+// nil so the caller can fall back to DefaultPorts. Ports outside 1-65535 or a
+// reversed range are rejected — better to fail loudly than silently scan wrong.
+func ParsePortSpec(spec string) ([]int, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil, nil
+	}
+	switch strings.ToLower(spec) {
+	case "all", "full":
+		ports := make([]int, 0, 65535)
+		for p := 1; p <= 65535; p++ {
+			ports = append(ports, p)
+		}
+		return ports, nil
+	}
+
+	var ports []int
+	for _, tok := range strings.Split(spec, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		lo, hi, isRange := strings.Cut(tok, "-")
+		if !isRange {
+			p, err := strconv.Atoi(tok)
+			if err != nil || p < 1 || p > 65535 {
+				return nil, fmt.Errorf("portscan: invalid port %q", tok)
+			}
+			ports = append(ports, p)
+			continue
+		}
+		start, err1 := strconv.Atoi(strings.TrimSpace(lo))
+		end, err2 := strconv.Atoi(strings.TrimSpace(hi))
+		if err1 != nil || err2 != nil || start < 1 || end > 65535 || start > end {
+			return nil, fmt.Errorf("portscan: invalid port range %q", tok)
+		}
+		for p := start; p <= end; p++ {
+			ports = append(ports, p)
+		}
+	}
+	if len(ports) == 0 {
+		return nil, fmt.Errorf("portscan: port spec %q yielded no ports", spec)
+	}
+	return dedupSortPorts(ports), nil
+}
+
 // Result is one open port found on a host.
 type Result struct {
 	Host string

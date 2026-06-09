@@ -6,6 +6,36 @@ import (
 	"testing"
 )
 
+func TestParsePortSpec(t *testing.T) {
+	if got, err := ParsePortSpec(""); err != nil || got != nil {
+		t.Errorf("empty spec: got %v err %v, want nil/nil (falls back to defaults)", got, err)
+	}
+
+	got, err := ParsePortSpec("443,8000-8002,80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{80, 443, 8000, 8001, 8002}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d]=%d, want %d (sorted+deduped)", i, got[i], want[i])
+		}
+	}
+
+	if all, err := ParsePortSpec("all"); err != nil || len(all) != 65535 {
+		t.Errorf("all: len %d err %v, want 65535/nil", len(all), err)
+	}
+
+	for _, bad := range []string{"0", "70000", "abc", "5-1", "80-"} {
+		if _, err := ParsePortSpec(bad); err == nil {
+			t.Errorf("spec %q should error", bad)
+		}
+	}
+}
+
 func TestExpandHosts(t *testing.T) {
 	tests := []struct {
 		name    string

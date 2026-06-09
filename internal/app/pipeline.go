@@ -181,9 +181,19 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 		}
 	}
 
-	fmt.Printf("[*] port scanning %d host(s) x %d ports...\n", len(hosts), len(portscan.DefaultPorts))
+	opts := portscan.DefaultOptions()
+	if p.cfg.Ports != "" {
+		ports, perr := portscan.ParsePortSpec(p.cfg.Ports)
+		if perr != nil {
+			fmt.Printf("[!] %v\n", perr)
+			return nil
+		}
+		opts.Ports = ports
+	}
 
-	sc := portscan.New(portscan.DefaultOptions())
+	fmt.Printf("[*] port scanning %d host(s) x %d ports...\n", len(hosts), len(opts.Ports))
+
+	sc := portscan.New(opts)
 	var open []portscan.Result
 	for r := range sc.Scan(ctx, hosts) {
 		open = append(open, r)

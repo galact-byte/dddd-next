@@ -28,6 +28,36 @@
 > - v0.1.23-cdn: 缺口⑥ CDN 识别落地——新增 `internal/discovery/cdn`，移植原版 271 条中文 CNAME 后缀库(阿里/腾讯/网宿/百度/华为…httpx IP 段 cdncheck 覆盖不到的)+cdn/waf 关键字+已知 CDN IP；**对原版的全栈升级**：①默认**标记但仍探测**(原版默认跳过)——dddd-next 对域名只 HTTP 探测不端口扫描，透过 CDN 仍触达真实应用，跳过反而漏；`-skip-cdn` 显式排除；②**剔除原版 IPv6/多 IP 启发式**(会误杀合法目标→漏报)，只保留高精度信号；③修原版 `LookupCNAME` 无 failover 的 bug；CDN 命中写报告(Source=cdn)；localtest.me 端到端实测路径生效；0 新增依赖(miekg/dns 转 direct)；cdn 匹配逻辑单测全绿，20 包回归全绿
 > - v0.1.24-netbios: gopocs 最后一个协议 NetBIOS 落地（协议 15→16，原版 17 仅剩 shiro 且已由 nuclei 覆盖=**实质全覆盖**）——探测型 POC：UDP 137 NBNS 名称查询泄露主机名/工作组/域(ParseNetBios) + TCP 139 SMBv1/NTLM 取 OS 版本/计算机名(ParseNTLM)，INFO 级信息泄露；路由 TCP 139→netbios(139 已在扫描覆盖)，probe 内部再查 UDP 137(绕开 dddd-next TCP-only 端口扫描无法发现 UDP 137 的问题)；**对原版改进**：复杂字节解析加 recover 守卫，畸形响应绝不崩溃整个扫描；0 新增依赖(yaml.v3 现成)；NetBIOS 路由+解析+畸形输入不 panic 单测全绿，20 包回归全绿
 > - v0.1.25-dir: **诚实复盘揪出真实缺口后补齐缺口⑦——产品路径二次指纹**（原版 main.go:219 `!NoDirSearch` 有、dddd-next 此前完全缺失，违反"不能漏"）。新增 `internal/discovery/dirscan` + 移植原版 `dir.yaml`(19 产品已知路径:Nacos/Druid/泛微OA/XXL-JOB/帆软/Jenkins/Harbor/MinIO…)；pipeline 在首页指纹后对每个存活 root 探测这些路径并跑指纹引擎，**发现首页指纹漏掉的子路径产品**(如 /nacos/ 控制台)→喂 POC；默认开启、`-no-dir` 关闭。**关键 bug 修复**：httpx 的 `InputTargetHost` 会剥掉 URL 路径(全 collapse 到 root)，改用 `RequestURIs`(`-path`)逐路径探测；**并发降到 15**(单主机猛打会压垮脆弱嵌入式目标→丢连接→漏报)；httptest 25 路径规模化测试证明逐路径探测；21 包回归全绿
+> - v0.1.26-ports: 缺口⑧自定义/全端口扫描——原版有 `-p` 自定义端口、dddd-next 此前固定 69 端口(服务在其它端口就漏，违反"不能漏")。`portscan.ParsePortSpec` 解析端口规格(逗号列表/`a-b`范围/`all`=1-65535，校验 1-65535 与范围方向)，config 加 `-p` flag；`-p` 空时仍用精选默认集。**附带核查 interactsh(原诚实复盘列的缺口)**：实证 nuclei SDK `sdk_private.go:85-89` 在未传 interactshOpts 时回退 `interactsh.DefaultOptions`(公共 oast)并始终建客户端→**OOB 盲打默认就启用，非缺口**(之前判断偏保守，纠正)；`-p "80,443,8000-8002"` 端到端实测精确扫 5 端口；ParsePortSpec 单测全绿，21 包回归全绿
+
+---
+
+## v0.1.26-ports — 自定义/全端口扫描（缺口⑧）+ interactsh 核查
+
+### 关键成果
+
+- **自定义/全端口扫描**：原版有 `-p`，dddd-next 此前固定 69 端口的精选集——服务跑在其它端口（如 7070、8888 外的业务端口）就会漏，违反"不能漏"。
+  - 新增 `portscan.ParsePortSpec`：解析逗号列表 + `a-b` 范围（`80,443,8000-8100`），关键字 `all`/`full` = 1-65535；校验端口在 1-65535、范围方向正确，非法规格直接报错（宁可显式失败也不静默扫错）。
+  - `-p` flag：空时沿用精选默认集（69 端口，速度优先）；显式指定时按规格扫。
+- **interactsh 核查（纠正之前的诚实复盘）**：之前把 interactsh 列为 🟠 缺口，本次实证 nuclei SDK `lib/sdk_private.go:85-89`——未传 `interactshOpts` 时回退 `interactsh.DefaultOptions`（公共 oast 服务器）并**始终创建** interactsh 客户端。dddd-next 未传该选项 → 走默认 → **OOB 盲打检测开箱即用，并非缺口**。仅"自定义 interactsh 服务器/token"未暴露（小众增强，低优先）。
+
+### 修改文件
+
+- `internal/discovery/portscan/portscan.go`：新增 `ParsePortSpec`（列表/范围/all，带校验）。
+- `internal/discovery/portscan/portscan_test.go`：ParsePortSpec 单测（列表去重排序、all=65535、非法规格报错）。
+- `internal/config/config.go`：Config 加 `Ports`、注册 `-p` flag。
+- `internal/app/pipeline.go`：`scanPorts` 解析 `-p` → portscan.Options.Ports（空则默认集）。
+- `cmd/dddd/main.go`：版本 `0.1.25-dev → 0.1.26-dev`。
+- `README.md`：已实现能力加自定义端口，Roadmap 移除该项与 interactsh。
+
+### 验证
+
+- ParsePortSpec 单测全绿（含非法规格报错）；`go build` + `go test ./...` 21 包回归全绿。
+- `dddd-next -t 127.0.0.1/32 -p "80,443,8000-8002"` 端到端实测：`port scanning 1 host(s) x 5 ports`（精确 5 端口，范围正确展开）。
+
+### 仍待补（原版有、本版缺）
+
+主动子域名爆破 —— 唯一剩余的"不能漏"覆盖缺口，下一步补。
 
 ---
 
