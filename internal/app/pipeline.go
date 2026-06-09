@@ -20,6 +20,7 @@ import (
 	"dddd-next/internal/classifier"
 	"dddd-next/internal/config"
 	"dddd-next/internal/discovery/cdn"
+	"dddd-next/internal/discovery/dirscan"
 	"dddd-next/internal/discovery/dnsx"
 	"dddd-next/internal/discovery/hostalive"
 	"dddd-next/internal/discovery/httpprobe"
@@ -105,6 +106,13 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 
 	liveURLs, fpHits := p.probeAndFingerprint(ctx, probeInputs)
+	if len(liveURLs) > 0 && !p.cfg.SkipDir {
+		dirURLs, dirHits := p.dirProbe(ctx, liveURLs)
+		liveURLs = dedup(append(liveURLs, dirURLs...))
+		for u, names := range dirHits {
+			fpHits[u] = append(fpHits[u], names...)
+		}
+	}
 	if len(liveURLs) > 0 {
 		p.runNuclei(ctx, liveURLs, fpHits)
 	}
@@ -433,6 +441,58 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 	}
 	fmt.Printf("[*] live web: %d, fingerprint hits: %d active + %d passive(tech)\n", len(live), active, passive)
 	return live, hits
+}
+
+// dirProbe requests well-known product paths (/nacos/, /druid/, ...) on each
+// live root and fingerprints the responses, catching products mounted on a
+// sub-path that the homepage probe missed. Returns the path URLs that matched a
+// fingerprint plus their product hits, to fold into the nuclei stage.
+func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, map[string][]string) {
+	db, err := dirscan.Load(filepath.Join(p.configDir, "dir.yaml"))
+	if err != nil {
+		fmt.Printf("[!] dirscan: %v; skipping product-path probe\n", err)
+		return nil, nil
+	}
+	paths := db.Paths()
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	fmt.Printf("[*] product-path probe: %d path(s) across %d root(s)...\n", len(paths), len(baseURLs))
+
+	probe := httpprobe.New(httpprobe.Options{
+		Targets:      baseURLs,
+		RequestPaths: paths,
+		TechDetect:   true,
+		Proxy:        p.cfg.ProxyURL,
+		// Many paths against a single root: keep concurrency modest so a fragile
+		// target (embedded device, old appliance) isn't overwhelmed into dropping
+		// connections — dropped probes read as "not found" and miss real products.
+		Threads: 15,
+	})
+	ch, err := probe.Run(ctx)
+	if err != nil {
+		fmt.Printf("[!] dirscan httpx: %v\n", err)
+		return nil, nil
+	}
+
+	var urls []string
+	hits := make(map[string][]string)
+	for resp := range ch {
+		var matched bool
+		for _, fp := range p.finger.Match(httpprobe.ToFingerprintContext(resp)) {
+			fp.Target = resp.URL
+			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
+				fmt.Printf("[!] report: %v\n", werr)
+			}
+			hits[resp.URL] = append(hits[resp.URL], fp.Name)
+			matched = true
+		}
+		if matched {
+			urls = append(urls, resp.URL)
+		}
+	}
+	fmt.Printf("[*] product-path probe: %d path(s) matched a fingerprint\n", len(urls))
+	return urls, hits
 }
 
 // runNuclei scans the live URLs. Precise mode (default) loads only the POC
