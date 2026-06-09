@@ -49,6 +49,7 @@ var defaultServicePorts = map[int]string{
 	21:    "ftp",
 	22:    "ssh",
 	23:    "telnet",
+	139:   "netbios",
 	445:   "smb",
 	1433:  "mssql",
 	1521:  "oracle",
@@ -116,6 +117,7 @@ func New(opts Options) *Engine {
 			"adb":       probeADB,
 			"jdwp":      probeJDWP,
 			"telnet":    probeTelnet,
+			"netbios":   probeNetBIOS,
 		},
 		servicePorts: defaultServicePorts,
 	}

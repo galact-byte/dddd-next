@@ -281,3 +281,44 @@ func TestRoutableJobsRoutesTelnet(t *testing.T) {
 		t.Error("telnet probe not registered")
 	}
 }
+
+func TestRoutableJobsRoutesNetBIOS(t *testing.T) {
+	e := New(DefaultOptions(""))
+	jobs := e.routableJobs([]Endpoint{{Host: "1.2.3.4", Port: 139}})
+	if len(jobs) != 1 || jobs[0].service != "netbios" {
+		t.Fatalf("139 should route to netbios, got %v", jobs)
+	}
+	if _, ok := e.probes["netbios"]; !ok {
+		t.Error("netbios probe not registered")
+	}
+}
+
+func TestParseNetBios(t *testing.T) {
+	// Minimal NBNS node-status reply: 57-byte header, 1 name entry (18 bytes).
+	input := make([]byte, 57+18)
+	input[56] = 1 // one name
+	copy(input[57:72], []byte("TESTPC         "))
+	input[72] = 0x00 // flag 0x00
+	input[73] = 0x04 // name_flags < 128 -> unique -> WorkstationService
+	input[74] = 0x00
+
+	info, err := parseNetBios(input)
+	if err != nil {
+		t.Fatalf("parseNetBios: %v", err)
+	}
+	if info.WorkstationService != "TESTPC" {
+		t.Errorf("WorkstationService = %q, want TESTPC", info.WorkstationService)
+	}
+	if info.String() == "" {
+		t.Error("String() should be non-empty when a name was parsed")
+	}
+}
+
+func TestParseNTLMNoPanic(t *testing.T) {
+	// Malformed/short responses must return an error, never panic.
+	for _, in := range [][]byte{nil, []byte("short"), []byte("NTLMSSP\x00\x02"), make([]byte, 60)} {
+		if _, err := parseNTLM(in); err == nil && len(in) < 47 {
+			t.Errorf("parseNTLM(%q) should error on short input", in)
+		}
+	}
+}
