@@ -29,6 +29,40 @@
 > - v0.1.24-netbios: gopocs 最后一个协议 NetBIOS 落地（协议 15→16，原版 17 仅剩 shiro 且已由 nuclei 覆盖=**实质全覆盖**）——探测型 POC：UDP 137 NBNS 名称查询泄露主机名/工作组/域(ParseNetBios) + TCP 139 SMBv1/NTLM 取 OS 版本/计算机名(ParseNTLM)，INFO 级信息泄露；路由 TCP 139→netbios(139 已在扫描覆盖)，probe 内部再查 UDP 137(绕开 dddd-next TCP-only 端口扫描无法发现 UDP 137 的问题)；**对原版改进**：复杂字节解析加 recover 守卫，畸形响应绝不崩溃整个扫描；0 新增依赖(yaml.v3 现成)；NetBIOS 路由+解析+畸形输入不 panic 单测全绿，20 包回归全绿
 > - v0.1.25-dir: **诚实复盘揪出真实缺口后补齐缺口⑦——产品路径二次指纹**（原版 main.go:219 `!NoDirSearch` 有、dddd-next 此前完全缺失，违反"不能漏"）。新增 `internal/discovery/dirscan` + 移植原版 `dir.yaml`(19 产品已知路径:Nacos/Druid/泛微OA/XXL-JOB/帆软/Jenkins/Harbor/MinIO…)；pipeline 在首页指纹后对每个存活 root 探测这些路径并跑指纹引擎，**发现首页指纹漏掉的子路径产品**(如 /nacos/ 控制台)→喂 POC；默认开启、`-no-dir` 关闭。**关键 bug 修复**：httpx 的 `InputTargetHost` 会剥掉 URL 路径(全 collapse 到 root)，改用 `RequestURIs`(`-path`)逐路径探测；**并发降到 15**(单主机猛打会压垮脆弱嵌入式目标→丢连接→漏报)；httptest 25 路径规模化测试证明逐路径探测；21 包回归全绿
 > - v0.1.26-ports: 缺口⑧自定义/全端口扫描——原版有 `-p` 自定义端口、dddd-next 此前固定 69 端口(服务在其它端口就漏，违反"不能漏")。`portscan.ParsePortSpec` 解析端口规格(逗号列表/`a-b`范围/`all`=1-65535，校验 1-65535 与范围方向)，config 加 `-p` flag；`-p` 空时仍用精选默认集。**附带核查 interactsh(原诚实复盘列的缺口)**：实证 nuclei SDK `sdk_private.go:85-89` 在未传 interactshOpts 时回退 `interactsh.DefaultOptions`(公共 oast)并始终建客户端→**OOB 盲打默认就启用，非缺口**(之前判断偏保守，纠正)；`-p "80,443,8000-8002"` 端到端实测精确扫 5 端口；ParsePortSpec 单测全绿，21 包回归全绿
+> - v0.1.27-subbrute: 缺口⑨主动子域名爆破(**最后一个覆盖缺口**)——原版有主动爆破、dddd-next 此前仅被动 subfinder(漏掉爆破才能发现的子域)。新增 `internal/discovery/subbrute`(纯函数:加载字典+生成 `<word>.<domain>` 候选)，pipeline 用 dnsx.ResolveMany 并发解析、保留能解析的，与 subfinder 合并；字典 subdomains.txt(1721 词)早已迁移；`-nsb` 关闭、默认开。**全栈升级**：加泛解析(wildcard DNS)检测——先探随机 sentinel 子域，能解析则跳过爆破(否则涌入上千假子域污染下游)，原版无此防护；subfinder 失败不再早退(让爆破照常跑)。localtest.me 端到端实测泛解析检测精准触发；subbrute 单测全绿，22 包回归全绿。**至此原版 recon 覆盖能力全部对齐**
+
+---
+
+## v0.1.27-subbrute — 主动子域名爆破（最后一个覆盖缺口，缺口⑨）
+
+### 关键成果
+
+- **主动子域名爆破**：原版有主动爆破，dddd-next 此前仅被动 subfinder——漏掉只能靠爆破发现的子域（内部/未公开/未被动收录的）。本次补齐：`<word>.<domain>` 候选 → dnsx 并发解析 → 保留能解析的 → 与 subfinder 合并去重。
+- 字典 `configs/dict/subdomains.txt`（1721 词）早已迁移，无需新增。`-nsb` 关闭爆破（仅被动），默认开启（与原版一致）。
+- **至此原版 recon 覆盖能力全部对齐**：gopocs 16/17、被动指纹、ICMP、CDN、产品路径、自定义端口、OOB(默认)、子域名爆破均已补齐。
+
+### 全栈升级（对原版的改进）
+
+- **泛解析(wildcard DNS)检测**：先探一个随机 sentinel 子域，若能解析说明该域是泛解析（`*.domain` 都指向同一 IP），跳过爆破——否则 1721 个词全部"解析成功"，涌入上千个不存在的子域污染下游扫描。原版无此防护。
+- **subfinder 失败不早退**：原 enumerateSubdomains 在 subfinder 出错时直接 return，会连带跳过爆破；改为记录错误后继续，保住爆破结果。
+
+### 新增文件
+
+- **`internal/discovery/subbrute/subbrute.go`**：`LoadWordlist` + `Candidates`（纯函数，无网络，可单测）。
+- **`internal/discovery/subbrute/subbrute_test.go`**：字典加载（跳过空行/注释）、候选生成、去重单测。
+
+### 修改文件
+
+- `internal/app/pipeline.go`：`enumerateSubdomains` 重构（先爆破后被动、不早退）+ 新增 `subdomainBrute`（字典→候选→dnsx 解析→过滤，含泛解析跳过）。
+- `internal/config/config.go`：Config 加 `NoSubBrute`、注册 `-nsb` flag。
+- `cmd/dddd/main.go`：版本 `0.1.26-dev → 0.1.27-dev`。
+- `README.md`：已实现能力加主动子域名爆破，Roadmap 标注覆盖能力全部对齐。
+
+### 验证
+
+- subbrute 单测全绿（加载/候选/去重）；`go build` + `go test ./...` 22 包回归全绿。
+- `dddd-next -t localtest.me -sd` 端到端实测：`subbrute: localtest.me has wildcard DNS, skipping brute-force` —— 泛解析检测精准触发，subfinder 仍合并出 140 子域，集成正确。
+- 注：真实非泛解析域的活体爆破命中未做（避免对外部基础设施大规模 DNS 爆破）；候选生成 + dnsx 解析逻辑分别单测覆盖。
 
 ---
 
