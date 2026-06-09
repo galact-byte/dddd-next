@@ -1,11 +1,8 @@
-// Package telnetlib is a minimal Telnet client used only for weak-credential
-// and unauthorized-access detection. It speaks just enough of the protocol to
-// answer IAC option negotiation, read the login banner, and drive a login
-// exchange — it is not a general-purpose Telnet terminal.
-//
-// Ported from SleepingBag945/dddd's gopocs/telnetlib. Two deliberate changes
-// from the original: unused option constants are dropped, and LastResponse is
-// mutex-guarded (the original read/wrote it from two goroutines unsynchronised).
+// Package telnetlib is a minimal Telnet client for weak-credential and
+// unauthorized-access detection: it answers IAC negotiation, reads the login
+// banner, and drives a login exchange. Ported from SleepingBag945/dddd; unlike
+// the original, lastResponse is mutex-guarded (it's written by the reader
+// goroutine while the main flow reads it).
 package telnetlib
 
 import (

@@ -35,11 +35,10 @@ var DefaultPorts = []int{
 // memory before the scan even starts.
 const maxExpand = 1 << 20
 
-// ParsePortSpec turns a CLI port spec into a port list. It accepts a
-// comma-separated mix of single ports and a-b ranges ("80,443,8000-8100"), or
-// the keywords "all"/"full" for the whole 1-65535 range. An empty spec returns
-// nil so the caller can fall back to DefaultPorts. Ports outside 1-65535 or a
-// reversed range are rejected — better to fail loudly than silently scan wrong.
+// ParsePortSpec turns a CLI port spec into a port list: a comma-separated mix
+// of single ports and a-b ranges ("80,443,8000-8100"), or "all"/"full" for
+// 1-65535. Empty returns nil (caller uses DefaultPorts); out-of-range or
+// reversed ranges are rejected.
 func ParsePortSpec(spec string) ([]int, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {

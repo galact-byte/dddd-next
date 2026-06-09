@@ -1,12 +1,7 @@
-// Package hostalive checks host liveness by ICMP echo. It is an opt-in
-// pre-filter for port scanning large ranges: when enabled, only hosts that
-// answer ICMP are scanned. It is OFF by default precisely because hardened
-// hosts often drop ICMP while still exposing open ports — filtering by ICMP
-// would silently miss them.
-//
-// Two strategies, tried in order: a raw ICMP socket (fast, one listener for the
-// whole batch, needs CAP_NET_RAW / Administrator) and, when that is unavailable,
-// the system ping command (privilege-free, always works on intranets).
+// Package hostalive checks host liveness by ICMP echo, an opt-in pre-filter for
+// large port-scan ranges. Off by default: hardened hosts often drop ICMP while
+// exposing open ports, so filtering by it would silently miss them. Tries a raw
+// ICMP socket first, then falls back to the system ping command (no privilege).
 package hostalive
 
 import (
@@ -39,9 +34,9 @@ func CheckLive(ctx context.Context, hosts []string, forcePing bool) []string {
 	return pingCommand(ctx, hosts)
 }
 
-// icmpEcho sends one echo request per host over a shared raw socket and collects
-// the source IPs that reply. ok is false when the raw socket cannot be opened
-// (no privilege), signalling the caller to fall back to the ping command.
+// icmpEcho sends one echo request per host over a shared raw socket. ok is
+// false when the raw socket can't be opened (no privilege) — the caller then
+// falls back to the ping command.
 func icmpEcho(ctx context.Context, hosts []string) (alive []string, ok bool) {
 	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {

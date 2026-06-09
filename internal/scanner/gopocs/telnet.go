@@ -17,11 +17,9 @@ type telnetCracker struct{}
 func (telnetCracker) Service() string { return "telnet" }
 
 // Try opens a fresh connection per credential (Telnet has no reusable auth
-// channel), classifies the login mode, then drives the matching login.
-//
-// UnauthorizedAccess and Closed both abandon the endpoint by returning a
-// non-nil error: the former is already reported by probeTelnet, and brute
-// forcing either one would only yield misleading "weak credential" hits.
+// channel) and drives the login mode. UnauthorizedAccess/Closed return an error
+// to abandon the endpoint — probeTelnet already reports the former, and brute
+// forcing either would only yield misleading "weak credential" hits.
 func (telnetCracker) Try(ctx context.Context, host string, port int, cred Credential, timeout time.Duration) (bool, error) {
 	client := telnetlib.New(host, port, timeout)
 	if err := client.Connect(); err != nil {

@@ -14,13 +14,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// probeNetBIOS leaks a Windows host's NetBIOS identity: hostname, workgroup/
-// domain and OS version. It queries the UDP 137 name service, then negotiates
-// SMBv1 over the routed TCP port (139) to read the NTLM type-2 fields. Severity
-// is INFO — this is reconnaissance, not a vulnerability.
-//
-// The TCP/UDP parsers do fiddly offset arithmetic on untrusted responses, so a
-// recover guards the whole probe: a malformed reply must never crash the scan.
+// probeNetBIOS leaks a Windows host's NetBIOS identity (hostname, workgroup/
+// domain, OS version) via the UDP 137 name service plus an SMBv1 NTLM negotiate
+// on TCP 139. INFO severity. The parsers do fiddly offset arithmetic on
+// untrusted responses, so a recover keeps a malformed reply from crashing the scan.
 func probeNetBIOS(ctx context.Context, host string, port int, timeout time.Duration) (f *types.Finding, err error) {
 	defer func() {
 		if r := recover(); r != nil {

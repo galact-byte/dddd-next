@@ -1,6 +1,5 @@
 // Package subbrute generates subdomain brute-force candidates from a wordlist.
-// Resolution is left to the caller (dnsx) — this package is pure so candidate
-// generation and wordlist parsing stay unit-testable without network.
+// Resolution is left to the caller (dnsx).
 package subbrute
 
 import (
