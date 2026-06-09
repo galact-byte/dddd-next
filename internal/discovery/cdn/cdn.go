@@ -1,16 +1,5 @@
-// Package cdn identifies whether a domain sits behind a CDN/WAF, primarily so a
-// scan can tell the operator that a resolved IP is an edge node, not the origin.
-//
-// Detection is CNAME-suffix based, ported from SleepingBag945/dddd's utils/cdn.
-// Its value over httpx's IP-range cdncheck is the curated database of Chinese
-// CDN providers (Alibaba, Tencent, Wangsu, Baidu, Huawei, ...) that IP-range
-// checks miss.
-//
-// Two of the original's heuristics are deliberately dropped: "any IPv6 domain"
-// and "multiple A records + a CNAME". Both produce false positives, and since a
-// CDN verdict can exclude a host from scanning, a false positive means a missed
-// target — the opposite of what this tool is for. We keep only high-precision
-// signals: a known CDN IP, a known CDN CNAME suffix, or a cdn/waf CNAME keyword.
+// Package cdn identifies whether a domain sits behind a CDN/WAF (CNAME-suffix
+// based), so a scan knows a resolved IP is an edge node, not the origin.
 package cdn
 
 import (
@@ -21,8 +10,6 @@ import (
 	"github.com/miekg/dns"
 )
 
-// dnsServers are public resolvers queried for the CNAME chain. The first to
-// answer wins.
 var dnsServers = []string{
 	"223.5.5.5:53",
 	"114.114.114.114:53",
@@ -61,7 +48,6 @@ func Check(domain string) Result {
 	return res
 }
 
-// matchByIP flags IPs that belong to a known CDN address.
 func matchByIP(ips []net.IP) (bool, string) {
 	for _, ip := range ips {
 		for _, item := range ipItems {
@@ -73,8 +59,8 @@ func matchByIP(ips []net.IP) (bool, string) {
 	return false, ""
 }
 
-// matchByCNAME flags a CNAME chain that ends in a known CDN suffix or carries a
-// cdn/waf keyword. Pure function — unit-tested without DNS.
+// matchByCNAME flags a CNAME chain ending in a known CDN suffix or carrying a
+// cdn/waf keyword.
 func matchByCNAME(cnames []string) (bool, string) {
 	for _, cname := range cnames {
 		lower := strings.ToLower(cname)
@@ -98,15 +84,13 @@ func lookupCNAME(domain string) ([]string, error) {
 	for _, server := range dnsServers {
 		cnames, err := lookupCNAMEWithServer(domain, server)
 		if err == nil {
-			return cnames, nil // first responding resolver wins (original had no failover)
+			return cnames, nil // first success wins (original queried only one server)
 		}
 		lastErr = err
 	}
 	return nil, lastErr
 }
 
-// lookupCNAMEWithServer asks one resolver for domain's A record and collects
-// every CNAME the answer chain passes through.
 func lookupCNAMEWithServer(domain, server string) ([]string, error) {
 	c := dns.Client{Timeout: 5 * time.Second}
 	m := dns.Msg{}

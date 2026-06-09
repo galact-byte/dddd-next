@@ -1,8 +1,6 @@
 // Package dirscan probes well-known product paths (/nacos/, /druid/, ...) on a
-// live web root to surface products that the homepage fingerprint misses — a
-// Nacos console or Druid monitor mounted on a sub-path, say. It is path-based
-// active fingerprinting, ported from SleepingBag945/dddd's dir.yaml flow, not a
-// generic word-list directory brute.
+// live web root to surface products mounted on a sub-path that the homepage
+// fingerprint misses. It is product-path fingerprinting, not a word-list brute.
 package dirscan
 
 import (
@@ -29,8 +27,6 @@ func Load(path string) (DB, error) {
 }
 
 // Paths returns the unique, sorted set of probe paths across all products.
-// Callers feed these to httpx's -path (RequestPaths) so it probes each path on
-// every live root.
 func (db DB) Paths() []string {
 	seen := make(map[string]struct{})
 	for _, paths := range db {

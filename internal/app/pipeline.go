@@ -306,8 +306,7 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 		set[d] = struct{}{}
 	}
 
-	// Active brute-force first — it catches subdomains absent from passive
-	// sources, the whole reason not to rely on subfinder alone.
+	// Active brute first — it catches subdomains absent from passive sources.
 	if !p.cfg.NoSubBrute {
 		for _, h := range p.subdomainBrute(ctx, domains) {
 			set[h] = struct{}{}
@@ -339,10 +338,9 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 	return out
 }
 
-// subdomainBrute resolves "<word>.<domain>" candidates from the wordlist and
-// keeps those that answer. Domains with wildcard DNS (a sentinel label still
-// resolves) are skipped — otherwise every word "resolves" and floods the scan
-// with non-existent hosts.
+// subdomainBrute resolves "<word>.<domain>" candidates and keeps those that
+// answer. Wildcard-DNS domains (a sentinel label still resolves) are skipped,
+// else every word "resolves" and floods the scan with non-existent hosts.
 func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []string {
 	words, err := subbrute.LoadWordlist(filepath.Join(p.configDir, "dict", "subdomains.txt"))
 	if err != nil {
@@ -381,11 +379,9 @@ func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []strin
 	return found
 }
 
-// identifyCDN flags domains that resolve through a CDN/WAF and records the
-// provider. The resolved edge IP is not the origin, so this warns the operator
-// not to attack it directly. By default flagged domains are still probed —
-// probing through a CDN still reaches the real app, so dropping them would miss
-// findings. -skip-cdn excludes them for operators who want only origin infra.
+// identifyCDN flags domains behind a CDN/WAF so the operator knows the resolved
+// IP is an edge, not the origin. Flagged domains are still probed by default
+// (probing through a CDN reaches the app); -skip-cdn excludes them.
 func (p *Pipeline) identifyCDN(ctx context.Context, domains []string) []string {
 	fmt.Printf("[*] CDN identification on %d domain(s)...\n", len(domains))
 
@@ -505,9 +501,8 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 }
 
 // dirProbe requests well-known product paths (/nacos/, /druid/, ...) on each
-// live root and fingerprints the responses, catching products mounted on a
-// sub-path that the homepage probe missed. Returns the path URLs that matched a
-// fingerprint plus their product hits, to fold into the nuclei stage.
+// live root and fingerprints the responses, catching products on a sub-path the
+// homepage probe missed. Returns matched path URLs and their hits for nuclei.
 func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, map[string][]string) {
 	db, err := dirscan.Load(filepath.Join(p.configDir, "dir.yaml"))
 	if err != nil {
@@ -525,9 +520,8 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, m
 		RequestPaths: paths,
 		TechDetect:   true,
 		Proxy:        p.cfg.ProxyURL,
-		// Many paths against a single root: keep concurrency modest so a fragile
-		// target (embedded device, old appliance) isn't overwhelmed into dropping
-		// connections — dropped probes read as "not found" and miss real products.
+		// Modest concurrency: hammering one root with many paths can overwhelm a
+		// fragile target into dropping connections, which read as false negatives.
 		Threads: 15,
 	})
 	ch, err := probe.Run(ctx)

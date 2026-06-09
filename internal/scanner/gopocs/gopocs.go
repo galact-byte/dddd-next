@@ -1,10 +1,8 @@
 // Package gopocs brute-forces weak credentials against common services.
 //
-// It follows internal/scanner/nuclei's shape — a channel of types.Finding with
-// no third-party types leaking to callers — rather than the abstract Scanner
-// interface sketched in docs/ARCHITECTURE.md, which the codebase has outgrown.
-// Each Cracker wraps a mature client library so we reuse the projectdiscovery
-// dependency tree instead of hand-rolling protocol handshakes.
+// It emits a channel of types.Finding with no third-party types leaking to
+// callers. Each Cracker wraps a mature client library so we reuse the
+// projectdiscovery dependency tree instead of hand-rolling protocol handshakes.
 package gopocs
 
 import (
