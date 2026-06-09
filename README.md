@@ -4,7 +4,7 @@
 
 `dddd-next` 是对原 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 项目的现代化重写。原项目自 2024 年后基本停更，但其依赖的 `nuclei`、`httpx`、`subfinder` 等仍在快速迭代，内置 POC 也已老化。本项目在保留 dddd 设计哲学的基础上，采用现代 Go 标准结构重构，依赖直接跟随 projectdiscovery 主线版本。
 
-> **当前状态**：核心扫描链路已全部打通，工程质量（依赖管理 / 结构 / 测试）已超越原版；功能广度约为原版的 80%，仍在对齐中（见下方 Roadmap）。
+> **当前状态**：核心扫描链路已全部打通，工程质量（依赖管理 / 结构 / 测试）已超越原版；原版核心能力已基本对齐（gopocs 16/17、被动指纹 / ICMP / CDN 均已补齐），约为原版的 85%。
 
 ## 与原项目的差异（全栈升级）
 
@@ -32,14 +32,18 @@
 - 弱口令爆破 **11 种**：SSH / FTP / MySQL / PostgreSQL / Redis / MSSQL / Oracle / MongoDB / SMB / RDP / Telnet
 - 漏洞探测：MS17-010（EternalBlue 永恒之蓝）SMB 远程命令执行
 - 未授权访问探测：memcached / ADB（安卓调试桥，RCE 等价）/ JDWP（Java 调试，RCE 等价）/ Telnet（直进 shell）
+- NetBIOS 信息探测（UDP 137 + TCP 139 NTLM，泄露主机名 / 工作组 / 域 / OS 版本）
 - Hunter / Fofa / Quake 测绘 API（`.env` 管理密钥）
 - TXT / JSON / HTML 三种报告 + 审计日志
 
-## 对齐原版的待补能力（Roadmap）
+## 对齐原版的状态（Roadmap）
 
-为达成对原版的完整功能复刻，仍需补齐：
+**原版核心能力已基本对齐**：
 
-- **gopocs 协议**（原版 17 种，已覆盖 15 / 缺 NetBIOS 信息收集，shiro 已由 nuclei 模板覆盖）
+- **gopocs 协议**：原版 17 种已覆盖 16（弱口令 11 + 探测型 5）；仅 shiro 未在 gopocs 实现，已由 nuclei 反序列化模板覆盖，实质全覆盖。
+- 被动指纹 / ICMP 存活探测 / CDN 识别均已补齐。
+
+后续为「全栈升级」方向（非原版功能）：持续跟随 projectdiscovery 主线、扩充指纹与 POC 映射、报告与可视化增强。
 
 ## 项目结构
 

@@ -26,6 +26,45 @@
 > - v0.1.21-icmp: 缺口④ ICMP 存活探测落地——新增 `internal/discovery/hostalive`，`-ping` flag 开启后对 CIDR/IP段先 ICMP 预筛、只扫存活主机(大网段提速)；**默认关闭**(遵循"不能漏"：封 ICMP 但开端口的加固主机不能因预筛被丢)；两级策略 raw ICMP 监听(0 新增依赖，x/net/icmp 转 direct)→系统 ping 命令(无特权兜底)；**修原版 3 个隐患**：Windows `ping -w 1`(1ms 超时几乎必漏)→`-w 1000`、用 stdout 含 `ttl=` 判定(替代 Windows 不可靠退出码+原版 /bin/bash shell 技巧)、Windows 用 System32\ping.exe 绝对路径(规避 PATH 里 python ping.py 劫持，实测揪出)；loopback 端到端实测预筛生效；19 包回归全绿
 > - v0.1.22-passive-fp: 缺口⑤ 被动指纹识别落地——**揪出既有缺陷**：`TechDetect:true` 早已开启、httpx wappalyzer 也跑了、`resp.Technologies` 也填充了，但从头到尾**被静默丢弃**(`ToFingerprintContext` 不含它)；本次将被动技术栈接入报告(Source=wappalyzer,confidence=75)+ 喂给 pocmap 选 POC(指纹→更多针对性 POC→发现更多问题)；本地 WordPress/jQuery/Bootstrap 靶标端到端实测 `5 active + 7 passive`，被动额外识别出主动漏掉的 MySQL/PHP 且带版本号(Python:3.14.4/WordPress:6.4.2)；0 新增依赖、0 新增文件(仅 pipeline 接线)；19 包回归全绿
 > - v0.1.23-cdn: 缺口⑥ CDN 识别落地——新增 `internal/discovery/cdn`，移植原版 271 条中文 CNAME 后缀库(阿里/腾讯/网宿/百度/华为…httpx IP 段 cdncheck 覆盖不到的)+cdn/waf 关键字+已知 CDN IP；**对原版的全栈升级**：①默认**标记但仍探测**(原版默认跳过)——dddd-next 对域名只 HTTP 探测不端口扫描，透过 CDN 仍触达真实应用，跳过反而漏；`-skip-cdn` 显式排除；②**剔除原版 IPv6/多 IP 启发式**(会误杀合法目标→漏报)，只保留高精度信号；③修原版 `LookupCNAME` 无 failover 的 bug；CDN 命中写报告(Source=cdn)；localtest.me 端到端实测路径生效；0 新增依赖(miekg/dns 转 direct)；cdn 匹配逻辑单测全绿，20 包回归全绿
+> - v0.1.24-netbios: gopocs 最后一个协议 NetBIOS 落地（协议 15→16，原版 17 仅剩 shiro 且已由 nuclei 覆盖=**实质全覆盖**）——探测型 POC：UDP 137 NBNS 名称查询泄露主机名/工作组/域(ParseNetBios) + TCP 139 SMBv1/NTLM 取 OS 版本/计算机名(ParseNTLM)，INFO 级信息泄露；路由 TCP 139→netbios(139 已在扫描覆盖)，probe 内部再查 UDP 137(绕开 dddd-next TCP-only 端口扫描无法发现 UDP 137 的问题)；**对原版改进**：复杂字节解析加 recover 守卫，畸形响应绝不崩溃整个扫描；0 新增依赖(yaml.v3 现成)；NetBIOS 路由+解析+畸形输入不 panic 单测全绿，20 包回归全绿
+
+---
+
+## v0.1.24-netbios — NetBIOS 信息探测（gopocs 最后一个协议，15 → 16）
+
+### 关键成果
+
+- **gopocs 协议实质全覆盖**：补上 NetBIOS 后，原版 17 个协议只剩 shiro 未在 gopocs 实现，而 shiro 反序列化已由 nuclei 模板覆盖——网络层弱口令/未授权/信息探测全部对齐。
+- **NetBIOS 信息泄露探测**（INFO 级，探测型 POC）：
+  - **UDP 137 NBNS 名称查询**（`parseNetBios`）：泄露主机名、工作组、域名、是否域控。
+  - **TCP 139 SMBv1/NTLM 协商**（`parseNTLM`）：泄露 OS 版本、计算机名、NetBIOS 域名。
+
+### 设计取舍
+
+- **路由绕开 TCP-only 限制**：dddd-next 端口扫描是 TCP connect，发现不了 UDP 137。沿用原版思路——以 **TCP 139 开放**为触发条件（139 已在 DefaultPorts），probe 内部再去查 UDP 137 + TCP 139 NTLM。
+- **recover 守卫**（对原版的防御式改进）：`parseNetBios`/`parseNTLM` 对不可信响应做大量字节偏移运算，原版无顶层保护。probe 入口加 `recover`，任何畸形响应只让该 probe 失败、绝不崩溃整个并发扫描。
+- **保留 yaml 解析**：原版用 `yaml.Unmarshal` 把 "Key: Value\n" 解析进结构体（靠 yaml tag），yaml.v3 现成依赖，忠实保留。
+- 0 新增依赖。
+
+### 新增文件
+
+- **`internal/scanner/gopocs/netbios.go`**：`probeNetBIOS`（UDP 137 + TCP 139 NTLM，recover 守卫）、`nbnsName`/`nbnsNTLM`、`parseNetBios`/`parseNTLM`/`joinNetBios`、`netbiosEncode`、名称类型映射表、SMBv1 协商包。
+
+### 修改文件
+
+- `internal/scanner/gopocs/gopocs.go`：`probes` 注册 netbios、`defaultServicePorts` 加 139→netbios。
+- `internal/scanner/gopocs/gopocs_test.go`：NetBIOS 路由 + `parseNetBios` 解析 + `parseNTLM` 畸形输入不 panic 测试。
+- `cmd/dddd/main.go`：版本 `0.1.23-dev → 0.1.24-dev`。
+- `README.md`：未授权/信息探测加 NetBIOS，gopocs 覆盖 16/17，Roadmap 移除 gopocs 项。
+
+### 验证
+
+- NetBIOS 路由 + 解析（构造最小 NBNS 响应解出 WorkstationService）+ 畸形输入不 panic 单测全绿；`go build` + `go test ./...` 20 包回归全绿。
+- 真实 Windows NetBIOS 主机端到端未做（无靶机）；字节级解析逻辑移植自原版已验证代码，构造响应单测覆盖核心路径。
+
+### gopocs 覆盖（原版 17 协议已覆盖 16，实质全覆盖）
+
+弱口令 11：ssh/ftp/mysql/postgresql/redis/mssql/oracle/mongodb/smb/rdp/telnet。探测型 5：ms17010/memcached/adb/jdwp/netbios（telnet 未授权同源计入 telnet）。仅剩 shiro —— 由 nuclei 反序列化模板覆盖。
 
 ---
 
