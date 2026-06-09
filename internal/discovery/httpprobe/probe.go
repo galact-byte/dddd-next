@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/httpx/runner"
@@ -55,6 +56,9 @@ type Options struct {
 	Proxy           string // HTTP/SOCKS5 URL; empty disables
 	Methods         string // default "GET"
 	MaxBodyBytes    int    // default 2 MiB
+	// RequestPaths probes each path on every target (httpx -path). Used for
+	// product-path fingerprinting (/nacos/, /druid/, ...); empty probes the root.
+	RequestPaths []string
 }
 
 // Probe drives a single httpx scan run.
@@ -106,6 +110,7 @@ func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 		// httpx fills Result.ResponseBody / RawHeaders only when this is set
 		// (runner.go ~2174); without it, body= and header= fingerprints never hit.
 		ResponseInStdout: true,
+		RequestURIs:      strings.Join(p.opts.RequestPaths, ","),
 		OnResult: func(r runner.Result) {
 			if r.Failed {
 				return

@@ -27,6 +27,50 @@
 > - v0.1.22-passive-fp: 缺口⑤ 被动指纹识别落地——**揪出既有缺陷**：`TechDetect:true` 早已开启、httpx wappalyzer 也跑了、`resp.Technologies` 也填充了，但从头到尾**被静默丢弃**(`ToFingerprintContext` 不含它)；本次将被动技术栈接入报告(Source=wappalyzer,confidence=75)+ 喂给 pocmap 选 POC(指纹→更多针对性 POC→发现更多问题)；本地 WordPress/jQuery/Bootstrap 靶标端到端实测 `5 active + 7 passive`，被动额外识别出主动漏掉的 MySQL/PHP 且带版本号(Python:3.14.4/WordPress:6.4.2)；0 新增依赖、0 新增文件(仅 pipeline 接线)；19 包回归全绿
 > - v0.1.23-cdn: 缺口⑥ CDN 识别落地——新增 `internal/discovery/cdn`，移植原版 271 条中文 CNAME 后缀库(阿里/腾讯/网宿/百度/华为…httpx IP 段 cdncheck 覆盖不到的)+cdn/waf 关键字+已知 CDN IP；**对原版的全栈升级**：①默认**标记但仍探测**(原版默认跳过)——dddd-next 对域名只 HTTP 探测不端口扫描，透过 CDN 仍触达真实应用，跳过反而漏；`-skip-cdn` 显式排除；②**剔除原版 IPv6/多 IP 启发式**(会误杀合法目标→漏报)，只保留高精度信号；③修原版 `LookupCNAME` 无 failover 的 bug；CDN 命中写报告(Source=cdn)；localtest.me 端到端实测路径生效；0 新增依赖(miekg/dns 转 direct)；cdn 匹配逻辑单测全绿，20 包回归全绿
 > - v0.1.24-netbios: gopocs 最后一个协议 NetBIOS 落地（协议 15→16，原版 17 仅剩 shiro 且已由 nuclei 覆盖=**实质全覆盖**）——探测型 POC：UDP 137 NBNS 名称查询泄露主机名/工作组/域(ParseNetBios) + TCP 139 SMBv1/NTLM 取 OS 版本/计算机名(ParseNTLM)，INFO 级信息泄露；路由 TCP 139→netbios(139 已在扫描覆盖)，probe 内部再查 UDP 137(绕开 dddd-next TCP-only 端口扫描无法发现 UDP 137 的问题)；**对原版改进**：复杂字节解析加 recover 守卫，畸形响应绝不崩溃整个扫描；0 新增依赖(yaml.v3 现成)；NetBIOS 路由+解析+畸形输入不 panic 单测全绿，20 包回归全绿
+> - v0.1.25-dir: **诚实复盘揪出真实缺口后补齐缺口⑦——产品路径二次指纹**（原版 main.go:219 `!NoDirSearch` 有、dddd-next 此前完全缺失，违反"不能漏"）。新增 `internal/discovery/dirscan` + 移植原版 `dir.yaml`(19 产品已知路径:Nacos/Druid/泛微OA/XXL-JOB/帆软/Jenkins/Harbor/MinIO…)；pipeline 在首页指纹后对每个存活 root 探测这些路径并跑指纹引擎，**发现首页指纹漏掉的子路径产品**(如 /nacos/ 控制台)→喂 POC；默认开启、`-no-dir` 关闭。**关键 bug 修复**：httpx 的 `InputTargetHost` 会剥掉 URL 路径(全 collapse 到 root)，改用 `RequestURIs`(`-path`)逐路径探测；**并发降到 15**(单主机猛打会压垮脆弱嵌入式目标→丢连接→漏报)；httptest 25 路径规模化测试证明逐路径探测；21 包回归全绿
+
+---
+
+## v0.1.25-dir — 产品路径二次指纹（诚实复盘补齐的缺口⑦）
+
+### 背景：一次诚实复盘
+
+主人追问"是否已全功能复刻"，逐项核对原版 55 个 flag + main.go 主流程后，发现之前"基本对齐"是**过度宣称**——原版有、dddd-next 缺的真实覆盖能力包括：目录扫描、子域名爆破、自定义/全端口、interactsh。本次先补最大的一项。
+
+### 关键成果
+
+- **产品路径二次指纹**（原版"目录爆破"的真实语义）：原版 `dir.yaml` 不是 dirsearch 万字字典，而是 19 个产品的已知路径映射（Nacos→/nacos/、Druid→/druid/、XXL-JOB、帆软、Jenkins、Harbor、MinIO…）。对每个存活 web root 探测这些路径并跑指纹引擎，**捕获首页指纹漏掉的子路径产品**（挂在 /nacos/ 的控制台等），确认后喂给 POC 选择 → 发现更多漏洞。
+- 默认开启（与原版一致），`-no-dir` 关闭。
+
+### 关键 bug 修复（端到端冒烟揪出）
+
+- **httpx 路径剥离**：最初用 `InputTargetHost` 传 base+path 全 URL，httpx 把路径**剥掉、全 collapse 到 root**（26 个路径目标全变成探测首页）。改用 httpx 的 `RequestURIs`（`-path`）逐路径探测——隔离测试证明单/多路径正确返回各自 body。
+- **并发压垮脆弱目标**：对单 root 用默认 50 并发猛打 26 路径，会压垮脆弱的嵌入式/老旧目标→连接重置→探测标记 Failed 被丢→**漏报**。dir-probe 并发降到 15。
+
+### 新增文件
+
+- **`internal/discovery/dirscan/dirscan.go`**：`Load`（YAML 产品→路径）+ `Paths()`（去重排序的探测路径集）。
+- **`internal/discovery/dirscan/dirscan_test.go`**：加载 + 路径去重/排序单测。
+- **`internal/discovery/httpprobe/requestpaths_test.go`**：httptest 25 路径规模化测试，证明 `RequestPaths` 逐路径探测（含查询串路径）。
+- **`configs/dir.yaml`**：移植原版 19 产品路径库。
+
+### 修改文件
+
+- `internal/discovery/httpprobe/probe.go`：Options 加 `RequestPaths`，映射到 httpx `RequestURIs`。
+- `internal/app/pipeline.go`：新增 `dirProbe`（加载→逐路径探测→指纹→收集，Threads=15），Run 在首页指纹后调用并把命中合并进 nuclei 阶段。
+- `internal/config/config.go`：Config 加 `SkipDir`、注册 `-no-dir` flag。
+- `cmd/dddd/main.go`：版本 `0.1.24-dev → 0.1.25-dev`。
+- `README.md`：已实现能力加产品路径探测，Roadmap 标注真实缺口现状。
+
+### 验证
+
+- dirscan 加载/路径单测 + httpprobe RequestPaths 25 路径 httptest 全绿；`go build` + `go test ./...` 21 包回归全绿。
+- 本地靶标端到端：dir-probe 步骤对存活 root 探测 26 路径（"product-path probe: 26 path(s) across 1 root(s)"）；RequestPaths 逐路径机制经隔离测试确认返回各路径真实 body。
+- 注：`python -m http.server` 单线程在 Windows 高并发下会拒连（测试环境 artifact，非产品问题），故用 httptest 并发服务器做规模化验证。
+
+### 仍待补（原版有、本版缺）
+
+主动子域名爆破、自定义/全端口扫描、interactsh OOB —— 已建任务，按"不能漏"优先级继续。
 
 ---
 
