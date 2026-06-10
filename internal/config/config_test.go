@@ -138,3 +138,46 @@ func TestLoadDotEnvMissingFileOK(t *testing.T) {
 		t.Errorf("missing file should be a no-op, got %v", err)
 	}
 }
+
+func TestParseArgsNewFlags(t *testing.T) {
+	cfg, err := ParseArgs([]string{"dddd", "-t", "1.1.1.1", "-severity", "critical", "-severity", "high", "-tags", "rce", "-exclude-tags", "dos", "-up", "admin:admin", "-no-brute", "-no-poc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Severity) != 2 || cfg.Severity[0] != "critical" || cfg.Severity[1] != "high" {
+		t.Errorf("Severity = %v, want [critical high]", cfg.Severity)
+	}
+	if len(cfg.Tags) != 1 || cfg.Tags[0] != "rce" {
+		t.Errorf("Tags = %v, want [rce]", cfg.Tags)
+	}
+	if len(cfg.ExcludeTags) != 1 || cfg.ExcludeTags[0] != "dos" {
+		t.Errorf("ExcludeTags = %v, want [dos]", cfg.ExcludeTags)
+	}
+	if len(cfg.CustomCreds) != 1 || cfg.CustomCreds[0] != "admin:admin" {
+		t.Errorf("CustomCreds = %v, want [admin:admin]", cfg.CustomCreds)
+	}
+	if !cfg.NoBrute {
+		t.Error("NoBrute = false, want true")
+	}
+	if !cfg.NoPoc {
+		t.Error("NoPoc = false, want true")
+	}
+}
+
+func TestParseArgsCustomCredsFile(t *testing.T) {
+	dir := t.TempDir()
+	credsFile := filepath.Join(dir, "creds.txt")
+	if err := os.WriteFile(credsFile, []byte("admin:admin\nroot:toor\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ParseArgs([]string{"dddd", "-t", "1.1.1.1", "-upf", credsFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.CustomCreds) != 2 {
+		t.Fatalf("CustomCreds = %v, want 2 items", cfg.CustomCreds)
+	}
+	if cfg.CustomCreds[0] != "admin:admin" || cfg.CustomCreds[1] != "root:toor" {
+		t.Errorf("CustomCreds = %v, want [admin:admin root:toor]", cfg.CustomCreds)
+	}
+}

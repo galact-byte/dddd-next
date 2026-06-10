@@ -40,6 +40,17 @@ type Config struct {
 	FullScan          bool
 	DisableGeneralPoc bool
 
+	Severity        []string
+	ExcludeSeverity []string
+	Tags            []string
+	ExcludeTags     []string
+
+	NoBrute bool
+	NoPoc   bool
+
+	CustomCreds     []string
+	CustomCredsFile string
+
 	LogLevel string
 
 	Subcommand string
@@ -102,6 +113,18 @@ func ParseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.FullScan, "full", cfg.FullScan, "run all nuclei templates instead of fingerprint-matched POCs")
 	fs.BoolVar(&cfg.DisableGeneralPoc, "no-general", cfg.DisableGeneralPoc, "skip the product-independent General-Poc set in precise mode")
 
+	var severity, excludeSeverity, tags, excludeTags, customCreds stringList
+	fs.Var(&severity, "severity", "nuclei severity filter: critical,high,medium,low,info (repeatable)")
+	fs.Var(&excludeSeverity, "exclude-severity", "exclude nuclei severities (repeatable)")
+	fs.Var(&tags, "tags", "nuclei template tags to include (repeatable)")
+	fs.Var(&excludeTags, "exclude-tags", "nuclei template tags to exclude (repeatable)")
+
+	fs.BoolVar(&cfg.NoBrute, "no-brute", cfg.NoBrute, "skip weak-credential brute-force (gopocs)")
+	fs.BoolVar(&cfg.NoPoc, "no-poc", cfg.NoPoc, "skip POC/exploit checks (nuclei + shiro)")
+
+	fs.Var(&customCreds, "up", "custom credential user:pass (repeatable)")
+	fs.StringVar(&cfg.CustomCredsFile, "upf", cfg.CustomCredsFile, "custom credential file (user:pass per line)")
+
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level: debug | info | warn | error")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -109,6 +132,11 @@ func ParseArgs(args []string) (Config, error) {
 	}
 
 	cfg.Targets = append(cfg.Targets, targets...)
+	cfg.Severity = append(cfg.Severity, severity...)
+	cfg.ExcludeSeverity = append(cfg.ExcludeSeverity, excludeSeverity...)
+	cfg.Tags = append(cfg.Tags, tags...)
+	cfg.ExcludeTags = append(cfg.ExcludeTags, excludeTags...)
+	cfg.CustomCreds = append(cfg.CustomCreds, customCreds...)
 
 	if cfg.TargetsFile != "" {
 		fileTargets, err := readLines(cfg.TargetsFile)
@@ -116,6 +144,14 @@ func ParseArgs(args []string) (Config, error) {
 			return cfg, fmt.Errorf("config: read targets file: %w", err)
 		}
 		cfg.Targets = append(cfg.Targets, fileTargets...)
+	}
+
+	if cfg.CustomCredsFile != "" {
+		fileCreds, err := readLines(cfg.CustomCredsFile)
+		if err != nil {
+			return cfg, fmt.Errorf("config: read custom creds file: %w", err)
+		}
+		cfg.CustomCreds = append(cfg.CustomCreds, fileCreds...)
 	}
 
 	return cfg, nil

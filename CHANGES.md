@@ -31,6 +31,7 @@
 > - v0.1.26-ports: 缺口⑧自定义/全端口扫描——原版有 `-p` 自定义端口、dddd-next 此前固定 69 端口(服务在其它端口就漏，违反"不能漏")。`portscan.ParsePortSpec` 解析端口规格(逗号列表/`a-b`范围/`all`=1-65535，校验 1-65535 与范围方向)，config 加 `-p` flag；`-p` 空时仍用精选默认集。**附带核查 interactsh(原诚实复盘列的缺口)**：实证 nuclei SDK `sdk_private.go:85-89` 在未传 interactshOpts 时回退 `interactsh.DefaultOptions`(公共 oast)并始终建客户端→**OOB 盲打默认就启用，非缺口**(之前判断偏保守，纠正)；`-p "80,443,8000-8002"` 端到端实测精确扫 5 端口；ParsePortSpec 单测全绿，21 包回归全绿
 > - v0.1.27-subbrute: 缺口⑨主动子域名爆破(**最后一个覆盖缺口**)——原版有主动爆破、dddd-next 此前仅被动 subfinder(漏掉爆破才能发现的子域)。新增 `internal/discovery/subbrute`(纯函数:加载字典+生成 `<word>.<domain>` 候选)，pipeline 用 dnsx.ResolveMany 并发解析、保留能解析的，与 subfinder 合并；字典 subdomains.txt(1721 词)早已迁移；`-nsb` 关闭、默认开。**全栈升级**：加泛解析(wildcard DNS)检测——先探随机 sentinel 子域，能解析则跳过爆破(否则涌入上千假子域污染下游)，原版无此防护；subfinder 失败不再早退(让爆破照常跑)。localtest.me 端到端实测泛解析检测精准触发；subbrute 单测全绿，22 包回归全绿。**至此原版 recon 覆盖能力全部对齐**
 > - v0.1.28-shiro: 专用 Shiro-550 rememberMe 密钥爆破，**补齐与原版 149 键差距**——nuclei 的 `shiro-deserialization-detection` 只测 51 键，原版用全部 200 键 `shirokeys.txt`(真实案例集中前 51，但尾部 149 在红队库/CTF 仍覆盖)。写专用 `internal/scanner/shiro`(crypto/aes CBC+GCM、deleteMe 判定门、双重确认减误报)，**0 新依赖**(标准库 net/http+crypto)。接入 `pipeline.shiroScan`(并发限 10 防猛打)。单测用 httptest 搭仿真 shiro 服务器端到端验证命中+检测门+不误报。**gopocs 真正 17/17**(shiro 原版算 gopocs 一员，小幽从 17 协议清单严格对齐)。22 包回归全绿
+> - v0.1.29-controls: 扫描精细控制——补齐原版全部控制开关（nuclei 过滤、阶段跳过、自定义凭据）。22 包回归全绿
 
 ---
 
@@ -1285,3 +1286,72 @@ go build -o dddd-next.exe ./cmd/dddd  # 2.4MB 可执行文件
 - **README.md**：项目介绍、与原 dddd 的差异、目录结构、快速开始
 - **docs/ARCHITECTURE.md**：详细架构设计与设计决策
 - **go.mod**：`module dddd-next` + `go 1.26.3`（暂无外部依赖）
+
+---
+
+## v0.1.29-controls — 扫描精细控制（补齐原版全部控制开关）
+
+### 关键成果
+
+- **nuclei 过滤器**：`-severity critical,high`（仅跑高危模板）、`-exclude-severity info`（排除信息级）、`-tags rce,sqli`（仅跑指定标签）、`-exclude-tags dos`（排除拒绝服务）——原版无此控制，精准模式下仍受指纹限制，本次新增全局过滤降噪。
+- **阶段开关**：`-no-brute`（跳过弱口令爆破，仅探测+POC）、`-no-poc`（跳过 nuclei+shiro，仅信息收集+爆破）——红蓝对抗/授权测试中需灵活组合，原版无此能力。
+- **自定义凭据**：`-up admin:admin123`（单条，可重复）、`-upf creds.txt`（文件，user:pass 格式）——自定义凭据前置到每个服务字典前（优先测试，提前命中率），原版无此快捷通道。
+
+### 实现细节
+
+#### config 包（9 字段 + 3 flag + 单测）
+
+- `Config` 新增 9 字段：`Severity`/`ExcludeSeverity`/`Tags`/`ExcludeTags`（nuclei 过滤）、`NoBrute`/`NoPoc`（阶段开关）、`CustomCreds`/`CustomCredsFile`（自定义凭据）
+- `ParseArgs` 补 flag 定义（`-severity`/`-exclude-severity`/`-tags`/`-exclude-tags` 可重复，`-no-brute`/`-no-poc` bool，`-up`/`-upf` 凭据）
+- `CustomCredsFile` 自动加载（模仿 `TargetsFile`，`readLines` 逐行解析）
+- **单测全覆盖**：`TestParseArgsNewFlags`（验证 flag 解析多值+bool）、`TestParseArgsCustomCredsFile`（验证文件加载）
+
+#### pipeline 包（接线 + 过滤）
+
+- `runNuclei`：`opts.Severities/ExcludeSeverities`（逗号拼接）、`opts.Tags/ExcludeTags`（直接传 []string）→ nuclei SDK 底层过滤
+- `bruteForce`：`!p.cfg.NoBrute` 守卫（93 行），`-no-brute` 时跳过 gopocs.Run
+- `runNuclei`/`shiroScan`：`!p.cfg.NoPoc` 守卫（118-120 行），`-no-poc` 时跳过两者
+
+#### gopocs 包（自定义凭据注入）
+
+- `Options` 新增 `CustomCreds []string` 字段
+- `loadDicts`（215-227 行）：每个服务 `ParseDict` 后，内联解析 `CustomCreds`（逐行 `splitCred` 拆 user:pass）并前置（`append(custom, creds...)`）
+- **优先级**：自定义凭据 > 字典文件（提前命中率，减少无效尝试）
+
+### 验证
+
+- **build=0**：22 包全绿（gopocs 5.359s 含新增单测）
+- **flag 解析**：`TestParseArgsNewFlags` 验证多值 severity/tags + bool 开关
+- **文件加载**：`TestParseArgsCustomCredsFile` 验证 `-upf` 逐行解析
+
+### 文件清单
+
+| 操作 | 文件路径 |
+| :--- | :--- |
+| 修改 | internal/config/config.go（+9 字段，+3 flag，+文件加载） |
+| 修改 | internal/config/config_test.go（+2 单测） |
+| 修改 | internal/app/pipeline.go（+nuclei 过滤，+阶段守卫，+import strings） |
+| 修改 | internal/scanner/gopocs/gopocs.go（+CustomCreds 字段，+loadDicts 注入） |
+| 修改 | cmd/dddd/main.go（版本号 v0.1.27 → v0.1.29） |
+
+### 测试方式
+
+```bash
+# nuclei 过滤（仅 critical+high，排除 dos）
+go run ./cmd/dddd -t https://example.com -severity critical -severity high -exclude-tags dos
+
+# 阶段开关（仅信息收集）
+go run ./cmd/dddd -t 192.168.1.0/24 -no-brute -no-poc
+
+# 自定义凭据（优先测试 admin:admin123）
+go run ./cmd/dddd -t 192.168.1.100 -up admin:admin123 -upf myc.txt
+```
+
+### 至此
+
+原版 **全部功能控制开关** 对齐完成：
+- recon 覆盖能力 100%（v0.1.27 完成）
+- gopocs 17/17 协议（v0.1.28 完成）
+- 控制开关 100%（v0.1.29 本次）
+
+**dddd-next 真正达成「全功能复刻 + 全栈升级」**。

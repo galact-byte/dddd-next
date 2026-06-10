@@ -73,7 +73,8 @@ type Options struct {
 	DictDir       string
 	Threads       int // concurrent endpoints (NOT concurrent guesses per host)
 	TimeoutSecond int
-	StopOnFirst   bool // stop a service after its first valid credential
+	StopOnFirst   bool     // stop a service after its first valid credential
+	CustomCreds   []string // user-supplied credentials (user:pass format), prepended to dict
 }
 
 func DefaultOptions(dictDir string) Options {
@@ -210,6 +211,21 @@ func (e *Engine) loadDicts(jobs []job) map[string][]Credential {
 		if err != nil {
 			fmt.Printf("[!] gopocs: %s dict: %v\n", svc, err)
 			continue
+		}
+		if len(e.opts.CustomCreds) > 0 {
+			var custom []Credential
+			for _, line := range e.opts.CustomCreds {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				if user, pass, ok := splitCred(line); ok {
+					custom = append(custom, Credential{User: user, Pass: pass})
+				} else {
+					custom = append(custom, Credential{Pass: line})
+				}
+			}
+			creds = append(custom, creds...)
 		}
 		dicts[svc] = creds
 	}
