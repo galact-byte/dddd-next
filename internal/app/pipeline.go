@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"dddd-next/internal/audit"
 	"dddd-next/internal/classifier"
@@ -34,6 +35,7 @@ import (
 	"dddd-next/internal/scanner/gopocs"
 	"dddd-next/internal/scanner/nuclei"
 	"dddd-next/internal/scanner/pocmap"
+	"dddd-next/internal/scanner/shiro"
 	"dddd-next/internal/types"
 )
 
@@ -116,6 +118,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	if len(liveURLs) > 0 {
 		p.runNuclei(ctx, liveURLs, fpHits)
+		p.shiroScan(ctx, liveURLs)
 	}
 	return nil
 }
@@ -548,6 +551,50 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, m
 	}
 	fmt.Printf("[*] product-path probe: %d path(s) matched a fingerprint\n", len(urls))
 	return urls, hits
+}
+
+// shiroScan brute-forces the Shiro rememberMe key on each live web root. The
+// per-target key loop is sequential; only the targets run in parallel, so a
+// vulnerable host isn't hit by the whole key list at once.
+func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
+	keys, err := shiro.LoadKeys(filepath.Join(p.configDir, "dict", "shirokeys.txt"))
+	if err != nil {
+		fmt.Printf("[!] shiro: %v; skipping shiro check\n", err)
+		return
+	}
+	sc := shiro.New(keys, 10*time.Second, p.cfg.ProxyURL)
+	fmt.Printf("[*] shiro key check on %d web root(s) (%d keys)...\n", len(urls), len(keys))
+
+	sem := make(chan struct{}, 10)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	hits := 0
+	for _, u := range urls {
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			f, err := sc.Scan(ctx, u)
+			if err != nil || f == nil {
+				return
+			}
+			if werr := p.reporter.WriteFinding(*f); werr != nil {
+				fmt.Printf("[!] report: %v\n", werr)
+			}
+			_ = p.auditor.LogInfo("finding", map[string]any{"id": f.ID, "severity": string(f.Severity), "target": f.Target})
+			mu.Lock()
+			hits++
+			mu.Unlock()
+		}(u)
+	}
+	wg.Wait()
+	fmt.Printf("[*] shiro: %d weak key(s) found\n", hits)
 }
 
 // runNuclei scans the live URLs. Precise mode (default) loads only the POC
