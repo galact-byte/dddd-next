@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,7 +91,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		for _, r := range openPorts {
 			probeInputs = append(probeInputs, fmt.Sprintf("%s:%d", r.Host, r.Port))
 		}
-		p.bruteForce(ctx, openPorts, services)
+		if !p.cfg.NoBrute {
+			p.bruteForce(ctx, openPorts, services)
+		}
 	}
 	if p.cfg.Subdomain && len(domains) > 0 {
 		domains = p.enumerateSubdomains(ctx, domains)
@@ -117,8 +120,10 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		}
 	}
 	if len(liveURLs) > 0 {
-		p.runNuclei(ctx, liveURLs, fpHits)
-		p.shiroScan(ctx, liveURLs)
+		if !p.cfg.NoPoc {
+			p.runNuclei(ctx, liveURLs, fpHits)
+			p.shiroScan(ctx, liveURLs)
+		}
 	}
 	return nil
 }
@@ -223,7 +228,9 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result, 
 
 	dictDir := filepath.Join(p.configDir, "dict")
 	fmt.Printf("[*] weak-credential brute force on %d open port(s)...\n", len(endpoints))
-	eng := gopocs.New(gopocs.DefaultOptions(dictDir))
+	opts := gopocs.DefaultOptions(dictDir)
+	opts.CustomCreds = p.cfg.CustomCreds
+	eng := gopocs.New(opts)
 
 	n := 0
 	for f := range eng.Run(ctx, endpoints) {
@@ -604,6 +611,18 @@ func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[stri
 	opts := nuclei.DefaultOptions()
 	if p.cfg.ProxyURL != "" {
 		opts.Proxy = []string{p.cfg.ProxyURL}
+	}
+	if len(p.cfg.Severity) > 0 {
+		opts.Severities = strings.Join(p.cfg.Severity, ",")
+	}
+	if len(p.cfg.ExcludeSeverity) > 0 {
+		opts.ExcludeSeverities = strings.Join(p.cfg.ExcludeSeverity, ",")
+	}
+	if len(p.cfg.Tags) > 0 {
+		opts.Tags = p.cfg.Tags
+	}
+	if len(p.cfg.ExcludeTags) > 0 {
+		opts.ExcludeTags = p.cfg.ExcludeTags
 	}
 
 	if p.cfg.FullScan {
