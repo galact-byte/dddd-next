@@ -32,6 +32,73 @@
 > - v0.1.27-subbrute: 缺口⑨主动子域名爆破(**最后一个覆盖缺口**)——原版有主动爆破、dddd-next 此前仅被动 subfinder(漏掉爆破才能发现的子域)。新增 `internal/discovery/subbrute`(纯函数:加载字典+生成 `<word>.<domain>` 候选)，pipeline 用 dnsx.ResolveMany 并发解析、保留能解析的，与 subfinder 合并；字典 subdomains.txt(1721 词)早已迁移；`-nsb` 关闭、默认开。**全栈升级**：加泛解析(wildcard DNS)检测——先探随机 sentinel 子域，能解析则跳过爆破(否则涌入上千假子域污染下游)，原版无此防护；subfinder 失败不再早退(让爆破照常跑)。localtest.me 端到端实测泛解析检测精准触发；subbrute 单测全绿，22 包回归全绿。**至此原版 recon 覆盖能力全部对齐**
 > - v0.1.28-shiro: 专用 Shiro-550 rememberMe 密钥爆破，**补齐与原版 149 键差距**——nuclei 的 `shiro-deserialization-detection` 只测 51 键，原版用全部 200 键 `shirokeys.txt`(真实案例集中前 51，但尾部 149 在红队库/CTF 仍覆盖)。写专用 `internal/scanner/shiro`(crypto/aes CBC+GCM、deleteMe 判定门、双重确认减误报)，**0 新依赖**(标准库 net/http+crypto)。接入 `pipeline.shiroScan`(并发限 10 防猛打)。单测用 httptest 搭仿真 shiro 服务器端到端验证命中+检测门+不误报。**gopocs 真正 17/17**(shiro 原版算 gopocs 一员，小幽从 17 协议清单严格对齐)。22 包回归全绿
 > - v0.1.29-controls: 扫描精细控制——补齐原版全部控制开关（nuclei 过滤、阶段跳过、自定义凭据）。22 包回归全绿
+> - v0.1.30-rpc+cli: **补齐原版第18个gopocs(RPC-GetHostInfo)** + CLI开关补全6项(-alf/-ns/-ngp/-np/-ni/-poc)。22 包回归全绿
+
+---
+
+## v0.1.30-rpc+cli — 补齐原版第18个GoPoC + CLI开关
+
+### 新增文件
+
+#### `internal/scanner/gopocs/rpc.go` — RPC Endpoint Mapper 信息泄露探针
+
+- **背景**：原版 dddd `gopocs/base.go` PluginList 实际注册了**18 个**插件（含 RPC-GetHostInfo），但之前对齐时错记为 17。本版本补齐最后 1 个。
+- **功能**：对 TCP 135 (DCE/RPC endpoint mapper) 发送 bind 请求，从 bind-ack 中提取 Windows 主机名和所有网卡 IP——用于发现多宿主跳板机。
+- **对原版的改进（取其精华去其糟粕）**：
+  - **Hex 往返解码 → `unicode/utf16` + `encoding/binary`**：原版 `HexUnicodeStringToString` 先 hex 编码→拼 `\uXXXX` 字符串→再解码，绕了三层；新版直接用 `binary.LittleEndian.Uint16` 读 UTF-16LE，`utf16.Decode` 转 Go string，一行顶三十行。
+  - **硬编码 `time.Duration(6)*time.Second` → 参数化 timeout**：尊重调用方传入的超时配置。
+  - **无 context → `DialContext`**：支持 Ctrl+C 取消。
+  - **无防护 → `recover()` 守卫**：畸形 RPC 响应不 panic，与 netbios.go 一致。
+  - **安全接口**：`ProbeFunc` 签名，与其他探针统一，自动接入 gopocs engine。
+- **0 新增依赖**：仅用标准库 `net`/`encoding/binary`/`unicode/utf16`。
+
+### 修改文件
+
+#### `internal/scanner/gopocs/gopocs.go` — 注册 RPC 探针
+- probes map 增加 `"rpc": probeRPC`
+- defaultServicePorts 增加 `135: "rpc"`
+
+#### `internal/config/config.go` — CLI 开关 (+6)
+- 新增 `AuditLogFile`（`-alf`，默认 `audit.log`）
+- 新增 `NoPassiveSubfinder`（`-ns`，禁用被动子域名枚举）
+- 新增 `NoGoPoc`（`-ngp`，仅跳 gopocs，nuclei+shiro 仍跑）
+- 新增 `ExcludePorts`（`-np`，排除指定端口）
+- 重新加入 `NoInteractsh`（`-ni`）+ `PocName`（`-poc`）——已完整接线
+
+#### `internal/scanner/nuclei/scanner.go` — 接线 -ni
+- Options 新增 `NoInteractsh` 字段
+- `buildSDKOptions` 通过 `nucleilib.WithOptions(&pkgtypes.Options{NoInteractsh: true})` 穿透到引擎
+
+#### `internal/app/pipeline.go` — 接线
+- `New()`: `audit.NewFile` 改用 `cfg.AuditLogFile` 替代硬编码 `"audit.log"`
+- `enumerateSubdomains()`: `-ns` 时跳过 subfinder，仅跑主动爆破
+- `bruteForce()`: `-ngp` 与 `-no-brute` 并列守卫
+- `scanPorts()`: `-np` 解析排除端口 + `excludeFrom` 过滤
+- `runNuclei()`: `-ni` → `opts.NoInteractsh`，`-poc` → `opts.TemplateIDs`
+- 新增 `excludeFrom()` 辅助函数
+
+#### `cmd/dddd/main.go` — help 文本同步
+
+### 当前 gopocs 对齐状态
+
+原版 18 插件 → dddd-next 全覆盖（17 gopocs + 1 shiro 独立包）：
+
+| # | 原版插件 | dddd-next | 位置 |
+|---|---------|-----------|------|
+| 1 | NetBios-GetHostInfo | ✅ probeNetBIOS | gopocs |
+| 2 | **RPC-GetHostInfo** | ✅ probeRPC | gopocs (**本次新增**) |
+| 3-12 | SSH/FTP/MySQL/MSSQL/Oracle/MongoDB/RDP/Redis/PostgreSQL/SMB | ✅ 10 cracker | gopocs |
+| 13 | SMB-MS17-010 | ✅ probeMS17010 | gopocs |
+| 14 | Telnet-Crack | ✅ cracker + probe | gopocs |
+| 15-16 | Memcache-Crack / ADB-Scan | ✅ probeMemcached + probeADB | gopocs |
+| 17 | JDWP-Scan | ✅ probeJDWP | gopocs |
+| 18 | Shiro-Key-Crack | ✅ shiro | internal/scanner/shiro |
+
+### 测试方式
+- `go build ./...` 零错误
+- `go test ./...` 22 包全绿
+- RPC 探针需 Windows 靶场（开放 TCP 135）验证协议交互
+- CLI 开关：`-alf foo.log` / `-ns` / `-ngp` / `-np 80,443` 可用 stdin 空目标触发 flag parse 验证
 
 ---
 

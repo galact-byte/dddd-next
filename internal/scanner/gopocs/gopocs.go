@@ -47,6 +47,7 @@ var defaultServicePorts = map[int]string{
 	21:    "ftp",
 	22:    "ssh",
 	23:    "telnet",
+	135:   "rpc",
 	139:   "netbios",
 	445:   "smb",
 	1433:  "mssql",
@@ -78,7 +79,7 @@ type Options struct {
 }
 
 func DefaultOptions(dictDir string) Options {
-	return Options{DictDir: dictDir, Threads: 50, TimeoutSecond: 5, StopOnFirst: true}
+	return Options{DictDir: dictDir, Threads: 50, TimeoutSecond: 3, StopOnFirst: true}
 }
 
 type Engine struct {
@@ -117,6 +118,7 @@ func New(opts Options) *Engine {
 			"jdwp":      probeJDWP,
 			"telnet":    probeTelnet,
 			"netbios":   probeNetBIOS,
+			"rpc":       probeRPC,
 		},
 		servicePorts: defaultServicePorts,
 	}
@@ -206,6 +208,10 @@ func (e *Engine) loadDicts(jobs []job) map[string][]Credential {
 
 	dicts := make(map[string][]Credential, len(need))
 	for svc := range need {
+		// Probe-only services have no cracker and need no dict.
+		if _, ok := e.crackers[svc]; !ok {
+			continue
+		}
 		path := filepath.Join(e.opts.DictDir, svc+".txt")
 		creds, err := ParseDict(path)
 		if err != nil {
@@ -242,6 +248,8 @@ func (e *Engine) handleEndpoint(ctx context.Context, j job, creds []Credential, 
 			case <-ctx.Done():
 				return
 			}
+		} else if perr != nil {
+			fmt.Printf("[!] gopocs: %s probe on %s:%d: %v\n", j.service, j.ep.Host, j.ep.Port, perr)
 		}
 	}
 	if _, ok := e.crackers[j.service]; ok && len(creds) > 0 {

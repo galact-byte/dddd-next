@@ -29,6 +29,7 @@ import (
 	nucleilib "github.com/projectdiscovery/nuclei/v3/lib"
 	nucleiconfig "github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
+	pkgtypes "github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
 
 // Options configures a Scanner. Use DefaultOptions() for safe baseline values.
@@ -60,6 +61,10 @@ type Options struct {
 
 	// Proxy is a list of proxy URLs (e.g. ["http://127.0.0.1:7890"]).
 	Proxy []string
+
+	NoInteractsh     bool
+	InteractshServer string
+	InteractshToken  string
 
 	// DisableUpdate stops nuclei from trying to upgrade templates on startup.
 	// Default true — `dddd update` owns template lifecycle.
@@ -220,6 +225,14 @@ func buildSDKOptions(o Options) []nucleilib.NucleiSDKOptions {
 		Verbose: o.Verbose,
 		Debug:   o.Debug,
 	}))
+
+	if o.NoInteractsh || o.InteractshServer != "" || o.InteractshToken != "" {
+		opts = append(opts, nucleilib.WithOptions(&pkgtypes.Options{
+			NoInteractsh:    o.NoInteractsh,
+			InteractshURL:   o.InteractshServer,
+			InteractshToken: o.InteractshToken,
+		}))
+	}
 
 	if o.DisableUpdate {
 		// The startup update check phones home and aborts init on failure.
