@@ -21,7 +21,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.31-dev"
+	appVersion = "0.1.32-dev"
 )
 
 func main() {
@@ -124,6 +124,7 @@ Scan flags:
   -nhb            disable domain-bound (vhost) asset probing
   -oip            pull recon assets as IP:Port instead of Domain:Port
   -ld             keep recon assets that resolve to LAN/private IPs
+  -lpm            Hunter low-perception: fingerprint from Hunter's banner, no probe
 
   -full           run all nuclei templates instead of fingerprint-matched POCs
   -no-general     skip the product-independent General-Poc set (precise mode)
