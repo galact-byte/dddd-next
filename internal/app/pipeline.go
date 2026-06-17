@@ -12,8 +12,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +50,10 @@ type Pipeline struct {
 	finger    *fingerprint.Engine
 	reporter  reporter.Reporter
 	auditor   *audit.Auditor
+
+	// ipDomains maps an IP to the domains known to resolve to it, feeding the
+	// vhost probe (re-request IP-based roots with each domain's Host header).
+	ipDomains map[string][]string
 }
 
 // New loads the fingerprint database and sets up the reporter/auditor sinks.
@@ -74,7 +81,7 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 	}
 
 	fmt.Printf("[32m[*][0m fingerprints loaded: %d rules\n", eng.Size())
-	return &Pipeline{cfg: cfg, configDir: configDir, finger: eng, reporter: rep, auditor: aud}, nil
+	return &Pipeline{cfg: cfg, configDir: configDir, finger: eng, reporter: rep, auditor: aud, ipDomains: make(map[string][]string)}, nil
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
@@ -117,6 +124,13 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		dirURLs, dirHits := p.dirProbe(ctx, stripPaths(liveURLs))
 		liveURLs = dedup(append(liveURLs, dirURLs...))
 		for u, names := range dirHits {
+			fpHits[u] = append(fpHits[u], names...)
+		}
+	}
+	if len(liveURLs) > 0 && !p.cfg.NoHostBind {
+		vhostURLs, vhostHits := p.vhostProbe(ctx, liveURLs)
+		liveURLs = dedup(append(liveURLs, vhostURLs...))
+		for u, names := range vhostHits {
 			fpHits[u] = append(fpHits[u], names...)
 		}
 	}
@@ -172,67 +186,153 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 	return probeInputs, domains, portscanSpecs, searchQueries
 }
 
-// scanPorts expands CIDR/IP-range specs into hosts and TCP-connect scans the
-// common port set, returning open ports for both the HTTP probe and the brute
-// forcer. Connect scanning is direct (no proxy) so it works on intranet targets.
+// scanPorts expands CIDR/IP-range specs into hosts, optionally pre-filters by
+// liveness, then scans ports via TCP connect (default) or SYN (-st syn).
 func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Result {
 	hosts, err := portscan.ExpandHosts(specs)
 	if err != nil {
-		fmt.Printf("[31m[!][0m portscan: %v\n", err)
+		fmt.Printf("\x1b[31m[!]\x1b[0m portscan: %v\n", err)
 		return nil
 	}
 
-	if p.cfg.PingFirst {
-		before := len(hosts)
-		hosts = hostalive.CheckLive(ctx, hosts, false)
-		fmt.Printf("[32m[*][0m ICMP liveness: %d/%d host(s) responded\n", len(hosts), before)
+	if p.cfg.PingFirst || p.cfg.TCPPing {
+		hosts = p.hostDiscovery(ctx, hosts)
 		if len(hosts) == 0 {
 			return nil
 		}
 	}
 
+	var open []portscan.Result
+	if p.cfg.ScanType == "syn" {
+		if results, ok := p.synScan(ctx, hosts); ok {
+			open = results
+		} else {
+			fmt.Println("\x1b[31m[!]\x1b[0m SYN scan unavailable (needs npcap/admin); falling back to TCP connect")
+			open = p.tcpScan(ctx, hosts)
+		}
+	} else {
+		open = p.tcpScan(ctx, hosts)
+	}
+
+	open = p.filterByPortThreshold(open)
+	for _, r := range open {
+		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
+	}
+	fmt.Printf("\x1b[32m[*]\x1b[0m open ports: %d\n", len(open))
+	return open
+}
+
+// tcpScan runs the dependency-free TCP connect scanner over the configured port
+// set (curated default, -p override, minus -np exclusions).
+func (p *Pipeline) tcpScan(ctx context.Context, hosts []string) []portscan.Result {
 	opts := portscan.DefaultOptions()
+	if p.cfg.TCPPortScanThreads > 0 {
+		opts.Threads = p.cfg.TCPPortScanThreads
+	}
+	if p.cfg.PortScanTimeout > 0 {
+		opts.TimeoutSeconds = p.cfg.PortScanTimeout
+	}
 	if p.cfg.Ports != "" {
 		ports, perr := portscan.ParsePortSpec(p.cfg.Ports)
 		if perr != nil {
-			fmt.Printf("[31m[!][0m %v\n", perr)
+			fmt.Printf("\x1b[31m[!]\x1b[0m %v\n", perr)
 			return nil
 		}
 		opts.Ports = ports
 	}
+	if p.cfg.ExcludePorts != "" {
+		excl, perr := portscan.ParsePortSpec(p.cfg.ExcludePorts)
+		if perr != nil {
+			fmt.Printf("\x1b[31m[!]\x1b[0m exclude ports: %v\n", perr)
+		} else {
+			opts.Ports = excludeFrom(opts.Ports, excl)
+		}
+	}
 
-	fmt.Printf("[32m[*][0m port scanning %d host(s) x %d ports...\n", len(hosts), len(opts.Ports))
-
+	fmt.Printf("\x1b[32m[*]\x1b[0m TCP port scanning %d host(s) x %d ports...\n", len(hosts), len(opts.Ports))
 	sc := portscan.New(opts)
 	var open []portscan.Result
 	for r := range sc.Scan(ctx, hosts) {
 		open = append(open, r)
-		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
-	fmt.Printf("[32m[*][0m open ports: %d\n", len(open))
 	return open
 }
 
-func (p *Pipeline) synScan(ctx context.Context, hosts []string) []portscan.Result {
-	ports := p.cfg.Ports
-	if ports == "" {
-		ports = "top1000"
+// hostDiscovery pre-filters hosts by ICMP (-ping) and/or TCP connect (-tp); a
+// host is kept if either probe answers.
+func (p *Pipeline) hostDiscovery(ctx context.Context, hosts []string) []string {
+	before := len(hosts)
+	aliveSet := make(map[string]struct{})
+
+	if p.cfg.PingFirst {
+		for _, h := range hostalive.CheckLive(ctx, hosts, false) {
+			aliveSet[h] = struct{}{}
+		}
+		fmt.Printf("\x1b[32m[*]\x1b[0m ICMP liveness: %d/%d responded\n", len(aliveSet), before)
 	}
-	fmt.Printf("[36m[SYN][0m scanning %d host(s)...\n", len(hosts))
+
+	if p.cfg.TCPPing {
+		var pending []string
+		if p.cfg.PingFirst {
+			for _, h := range hosts {
+				if _, ok := aliveSet[h]; !ok {
+					pending = append(pending, h)
+				}
+			}
+		} else {
+			pending = hosts
+		}
+		added := hostalive.CheckLiveTCP(ctx, pending, nil, p.cfg.PortScanTimeout)
+		for _, h := range added {
+			aliveSet[h] = struct{}{}
+		}
+		fmt.Printf("\x1b[32m[*]\x1b[0m TCP liveness: +%d host(s)\n", len(added))
+	}
+
+	alive := make([]string, 0, len(aliveSet))
+	for _, h := range hosts {
+		if _, ok := aliveSet[h]; ok {
+			alive = append(alive, h)
+			delete(aliveSet, h)
+		}
+	}
+	fmt.Printf("\x1b[32m[*]\x1b[0m host discovery: %d/%d alive\n", len(alive), before)
+	return alive
+}
+
+// synScan runs a naabu SYN scan; ok is false when raw sockets are unavailable
+// (no npcap/privilege), signalling the caller to fall back to TCP connect.
+func (p *Pipeline) synScan(ctx context.Context, hosts []string) ([]portscan.Result, bool) {
+	fmt.Printf("\x1b[36m[SYN]\x1b[0m scanning %d host(s)...\n", len(hosts))
 	opts := synscan.DefaultOptions()
 	opts.Rate = p.cfg.SYNScanRate
-	results, err := synscan.Scan(ctx, hosts, ports, opts)
+	results, err := synscan.Scan(ctx, hosts, p.synPortSpec(), opts)
 	if err != nil {
-		fmt.Printf("[31m[!][0m synscan: %v\n", err)
-		return nil
+		fmt.Printf("\x1b[31m[!]\x1b[0m synscan: %v\n", err)
+		return nil, false
 	}
-	var open []portscan.Result
+	open := make([]portscan.Result, 0, len(results))
 	for _, r := range results {
 		open = append(open, portscan.Result{Host: r.Host, Port: r.Port})
-		fmt.Printf("  %s:%d\n", r.Host, r.Port)
-		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
-	return open
+	return open, true
+}
+
+// synPortSpec renders the naabu port string: -p when set (all/full -> full
+// range), else the curated default set. naabu rejects the "top1000" alias.
+func (p *Pipeline) synPortSpec() string {
+	spec := strings.TrimSpace(p.cfg.Ports)
+	if spec == "" {
+		parts := make([]string, len(portscan.DefaultPorts))
+		for idx, port := range portscan.DefaultPorts {
+			parts[idx] = strconv.Itoa(port)
+		}
+		return strings.Join(parts, ",")
+	}
+	if strings.EqualFold(spec, "all") || strings.EqualFold(spec, "full") {
+		return "1-65535"
+	}
+	return spec
 }
 
 // bruteForce attempts weak credentials against the service ports the scanner
@@ -315,7 +415,13 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 			continue
 		}
 		for _, a := range assets {
+			if a.IP != "" && !p.cfg.AllowLocalAreaDomain && isPrivateIP(a.IP) {
+				continue
+			}
 			host := a.Host
+			if p.cfg.OnlyIPPort && a.IP != "" {
+				host = a.IP
+			}
 			if host == "" {
 				host = a.IP
 			}
@@ -481,6 +587,7 @@ func (p *Pipeline) resolveDomains(ctx context.Context, domains []string) []strin
 			continue
 		}
 		live = append(live, res.Host)
+		p.recordHostIPs(res.Host, res.IPs)
 		_ = p.auditor.LogInfo("resolve", map[string]any{"host": res.Host, "ips": res.IPs})
 	}
 	fmt.Printf("[32m[*][0m resolved (live): %d\n", len(live))
@@ -507,6 +614,7 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 	active, passive := 0, 0
 	for resp := range ch {
 		live = append(live, resp.URL)
+		p.recordHostIPs(resp.Host, resp.A)
 		_ = p.auditor.LogResponse(resp.URL, "http-probe", map[string]any{
 			"status": resp.StatusCode, "title": resp.Title,
 		})
@@ -857,4 +965,114 @@ func dedup(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// vhostProbe re-requests IP-based live roots with each domain known to resolve
+// to that IP (Host = domain), surfacing virtual hosts that answer only by name —
+// notably on non-standard ports a bare-IP probe can't attribute.
+func (p *Pipeline) vhostProbe(ctx context.Context, liveURLs []string) ([]string, map[string][]string) {
+	if len(p.ipDomains) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]struct{})
+	var targets []string
+	for _, u := range liveURLs {
+		scheme, host, port := splitURL(u)
+		if host == "" || net.ParseIP(host) == nil {
+			continue
+		}
+		for _, d := range p.ipDomains[host] {
+			vu := scheme + "://" + d
+			if port != "" {
+				vu += ":" + port
+			}
+			if _, ok := seen[vu]; ok {
+				continue
+			}
+			seen[vu] = struct{}{}
+			targets = append(targets, vu)
+		}
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	fmt.Printf("\x1b[32m[*]\x1b[0m vhost probe: %d domain-bound candidate(s)...\n", len(targets))
+
+	probe := httpprobe.New(httpprobe.Options{
+		Targets:    targets,
+		TechDetect: true,
+		Proxy:      p.cfg.ProxyURL,
+		Threads:    50,
+	})
+	ch, err := probe.Run(ctx)
+	if err != nil {
+		fmt.Printf("\x1b[31m[!]\x1b[0m vhost httpx: %v\n", err)
+		return nil, nil
+	}
+
+	var urls []string
+	hits := make(map[string][]string)
+	for resp := range ch {
+		urls = append(urls, resp.URL)
+		_ = p.auditor.LogInfo("vhost", map[string]any{"url": resp.URL, "status": resp.StatusCode, "title": resp.Title})
+		for _, fp := range p.finger.Match(httpprobe.ToFingerprintContext(resp)) {
+			fp.Target = resp.URL
+			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
+				fmt.Printf("\x1b[31m[!]\x1b[0m report: %v\n", werr)
+			}
+			hits[resp.URL] = append(hits[resp.URL], fp.Name)
+		}
+		for _, tech := range resp.Technologies {
+			if tech == "" {
+				continue
+			}
+			fp := types.Fingerprint{Name: tech, Target: resp.URL, Source: "wappalyzer", Confidence: 75}
+			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
+				fmt.Printf("\x1b[31m[!]\x1b[0m report: %v\n", werr)
+			}
+			hits[resp.URL] = append(hits[resp.URL], tech)
+		}
+	}
+	fmt.Printf("\x1b[32m[*]\x1b[0m vhost probe: %d live domain-bound root(s)\n", len(urls))
+	return urls, hits
+}
+
+// recordHostIPs maps each resolved IP back to a hostname (IP-literal hosts are
+// skipped) so vhostProbe can re-request IP roots by domain.
+func (p *Pipeline) recordHostIPs(host string, ips []string) {
+	if host == "" || net.ParseIP(host) != nil {
+		return
+	}
+	for _, ip := range ips {
+		if ip == "" {
+			continue
+		}
+		p.ipDomains[ip] = appendUnique(p.ipDomains[ip], host)
+	}
+}
+
+func splitURL(raw string) (scheme, host, port string) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", "", ""
+	}
+	return u.Scheme, u.Hostname(), u.Port()
+}
+
+func appendUnique(list []string, v string) []string {
+	for _, x := range list {
+		if x == v {
+			return list
+		}
+	}
+	return append(list, v)
+}
+
+func isPrivateIP(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
