@@ -29,6 +29,7 @@ import (
 	"dddd-next/internal/discovery/dnsx"
 	"dddd-next/internal/discovery/hostalive"
 	"dddd-next/internal/discovery/httpprobe"
+	"dddd-next/internal/discovery/hunter"
 	"dddd-next/internal/discovery/portscan"
 	"dddd-next/internal/discovery/servicedetect"
 	"dddd-next/internal/discovery/subbrute"
@@ -42,6 +43,7 @@ import (
 	"dddd-next/internal/scanner/pocmap"
 	"dddd-next/internal/scanner/shiro"
 	"dddd-next/internal/types"
+	"dddd-next/pkg/fingerdsl"
 )
 
 type Pipeline struct {
@@ -86,6 +88,10 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 
 func (p *Pipeline) Run(ctx context.Context) error {
 	probeInputs, domains, portscanSpecs, searchQueries := p.parseTargets()
+
+	if p.cfg.LowPerception {
+		return p.runLowPerception(ctx, searchQueries)
+	}
 
 	var openPorts []portscan.Result
 	if len(portscanSpecs) > 0 {
@@ -1075,4 +1081,80 @@ func isPrivateIP(s string) bool {
 		return false
 	}
 	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+}
+
+// runLowPerception pulls assets from Hunter and fingerprints each web asset from
+// the banner Hunter returns — no packet reaches the target. Web roots go to
+// nuclei, non-web services to gopocs (the exploit phase itself still sends).
+func (p *Pipeline) runLowPerception(ctx context.Context, queries []string) error {
+	if len(queries) == 0 {
+		fmt.Println("\x1b[31m[!]\x1b[0m low-perception (-lpm) needs a Hunter query as -t, e.g. -t 'app=\"seeyon\"'")
+		return nil
+	}
+
+	client, err := hunter.New(hunter.Options{APIKey: os.Getenv("HUNTER_API_KEY"), Proxy: p.cfg.ProxyURL})
+	if err != nil {
+		return fmt.Errorf("app: low-perception: %w", err)
+	}
+
+	var liveURLs []string
+	fpHits := make(map[string][]string)
+	var openPorts []portscan.Result
+	services := make(map[string]string)
+
+	for _, q := range queries {
+		fmt.Printf("\x1b[32m[*]\x1b[0m hunter low-perception query: %s\n", q)
+		assets, qerr := client.Search(ctx, q)
+		if qerr != nil {
+			fmt.Printf("\x1b[31m[!]\x1b[0m hunter: %v\n", qerr)
+			continue
+		}
+		for _, a := range assets {
+			if a.IsWeb {
+				rootURL := fmt.Sprintf("%s://%s:%d", webScheme(a.Protocol), a.IP, a.Port)
+				b := hunter.ParseBanner(a.Banner)
+				fctx := fingerdsl.Context{
+					"body":     b.Body,
+					"header":   b.Header,
+					"title":    a.Title,
+					"banner":   b.Server,
+					"protocol": webScheme(a.Protocol),
+				}
+				for _, fp := range p.finger.Match(fctx) {
+					fp.Target = rootURL
+					if werr := p.reporter.WriteFingerprint(rootURL, fp); werr != nil {
+						fmt.Printf("\x1b[31m[!]\x1b[0m report: %v\n", werr)
+					}
+					fpHits[rootURL] = append(fpHits[rootURL], fp.Name)
+				}
+				liveURLs = append(liveURLs, rootURL)
+				_ = p.auditor.LogInfo("hunter-web", map[string]any{"url": rootURL, "title": a.Title})
+			} else {
+				openPorts = append(openPorts, portscan.Result{Host: a.IP, Port: a.Port})
+				if a.Protocol != "" {
+					services[fmt.Sprintf("%s:%d", a.IP, a.Port)] = a.Protocol
+				}
+				_ = p.auditor.LogInfo("hunter-service", map[string]any{"host": a.IP, "port": a.Port, "protocol": a.Protocol})
+			}
+		}
+	}
+
+	liveURLs = dedup(liveURLs)
+	fmt.Printf("\x1b[32m[*]\x1b[0m low-perception: %d web root(s), %d service(s) — no packet sent to targets\n", len(liveURLs), len(openPorts))
+
+	if len(openPorts) > 0 && !p.cfg.NoBrute {
+		p.bruteForce(ctx, openPorts, services)
+	}
+	if len(liveURLs) > 0 && !p.cfg.NoPoc {
+		p.runNuclei(ctx, liveURLs, fpHits)
+		p.shiroScan(ctx, liveURLs)
+	}
+	return nil
+}
+
+func webScheme(proto string) string {
+	if strings.EqualFold(proto, "https") {
+		return "https"
+	}
+	return "http"
 }

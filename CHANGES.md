@@ -34,6 +34,35 @@
 > - v0.1.29-controls: 扫描精细控制——补齐原版全部控制开关（nuclei 过滤、阶段跳过、自定义凭据）。22 包回归全绿
 > - v0.1.30-rpc+cli: **补齐原版第18个gopocs(RPC-GetHostInfo)** + CLI开关补全6项(-alf/-ns/-ngp/-np/-ni/-poc)。22 包回归全绿
 > - v0.1.31-parity: 补齐诚实复盘漏算的剩余缺口——**SYN 扫描接线**(原 `synScan` 是死代码、`-st syn` 静默降级 TCP，修复并改掉传给 naabu 的非法 `"top1000"` 端口默认值)、**vhost 域名绑定资产探测**(原版 `HostBindCheck`，对 IP 型存活根用域名 Host 重探，发现非标端口上的虚拟主机；`-nhb` 关)、**TCP-Ping 主机发现**(`-tp`)、`-oip`/`-ld` 控制开关；附带修复 `-tst`/`-pst`/`-np`/`-pmc` 此前"定义却未接线"、Windows cmd 启用 VT 让 ANSI 颜色真正显示。**诚实声明**：Hunter 低感知模式(`-lpm`)未补——它依赖 Hunter 返回响应体，而 projectdiscovery/uncover 只暴露 host/port/url/ip，需自写 Hunter 客户端，留作独立任务。23 包回归全绿
+> - v0.1.32-lpm: 补上 v0.1.31 唯一欠的那块——**Hunter 低感知模式(`-lpm`)**。原版靠 Hunter API 返回的 `banner`(目标原始 HTTP 响应)本地判指纹、对目标零发包；而 `projectdiscovery/uncover` 解码时把结果砍到只剩 ip/port/domain、丢弃 banner，故绕开它新写专用 `internal/discovery/hunter` 客户端(直连 openApi、`is_web=3` 取 banner、**0 新增依赖**)，pipeline `runLowPerception` 用 banner→指纹→精准 POC，web 进 nuclei、非 web 进 gopocs。**至此原版会影响"能发现什么"的能力全部对齐**，剩余仅 SYN/masscan 性能项。24 包回归全绿
+
+---
+
+## v0.1.32-lpm — Hunter 低感知模式（补齐最后一块覆盖缺口）
+
+> v0.1.31 诚实声明里唯一没补的能力。复盘确认原版低感知不是玄学：Hunter 的 openApi 响应带 `banner`(目标原始 HTTP 响应)，原版 `hunter.go:194` 用 `ExtractResponse(banner)` 本地拆出 body/header 判指纹，全程不发包。dddd-next 之前判定做不了，根因是 `projectdiscovery/uncover` 在 `sources/agent/hunter/response.go` 解码时只保留 ip/port/domain、把 banner 连同 `Result.Raw` 一起砍掉 → 取不到。故绕开 uncover 自写客户端（原版本来也是自写，不用 uncover 取 Hunter）。
+
+### 新增文件
+
+#### `internal/discovery/hunter/hunter.go` — 专用 Hunter 客户端
+- 直连 `hunter.qianxin.com/openApi/search`：base64 search、分页(限速 3s)、`is_web=3`(banner 仅在带 is_web 时返回)，解析**含 banner** 的完整 JSON。
+- `ParseBanner` 把原始 HTTP 响应拆成 status/header/body/server/content-type。
+- **0 新增依赖**(标准库 net/http + encoding/json)。
+
+### 修改文件
+
+#### `internal/app/pipeline.go` — runLowPerception 分支
+- `-lpm` 时 `Run` 直接走 `runLowPerception`：web 资产用 banner 建 `fingerdsl.Context` → `finger.Match` → 喂精准 POC（**零探测**）；非 web 登记 ip:port+protocol 进 gopocs。漏洞/爆破阶段照常发包——低感知只压低侦察 footprint，不是不打。
+
+#### `internal/config/config.go` + `cmd/dddd/main.go` — `-lpm` flag + help + 版本 0.1.32
+
+### 测试方式
+- `internal/discovery/hunter` 单测：`ParseBanner`(CRLF/LF 两种)、httptest 假 Hunter 服务验证**真能取到 banner**、无 key 报错。
+- `go build` / `go vet` 干净；`go test ./...` **24 包全绿**。
+- 局限：真实 Hunter 查询需 API key + 网络，客户端逻辑用 httptest 覆盖，未做真实 API 联测。
+
+### 对齐状态
+- **原版会影响"能发现什么"的能力已全部对齐（含低感知）**；剩余差异仅 SYN/masscan 性能加速项。
 
 ---
 

@@ -36,6 +36,7 @@ type Config struct {
 
 	OnlyIPPort           bool
 	AllowLocalAreaDomain bool
+	LowPerception        bool
 
 	FullScan          bool
 	DisableGeneralPoc bool
@@ -143,6 +144,7 @@ func ParseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.NoHostBind, "nhb", cfg.NoHostBind, "disable domain-bound (vhost) asset probing")
 	fs.BoolVar(&cfg.OnlyIPPort, "oip", cfg.OnlyIPPort, "pull recon assets as IP:Port instead of Domain:Port")
 	fs.BoolVar(&cfg.AllowLocalAreaDomain, "ld", cfg.AllowLocalAreaDomain, "keep recon assets resolving to LAN/private IPs")
+	fs.BoolVar(&cfg.LowPerception, "lpm", cfg.LowPerception, "Hunter low-perception mode: fingerprint from Hunter's banner without probing")
 	fs.StringVar(&cfg.Ports, "p", cfg.Ports, "port spec: \"80,443,8000-8100\" or \"all\" for 1-65535")
 	fs.StringVar(&cfg.ExcludePorts, "np", cfg.ExcludePorts, "exclude ports (comma-separated)")
 	fs.IntVar(&cfg.PortsThreshold, "pmc", cfg.PortsThreshold, "max open ports per IP before dropping it as firewalled")
