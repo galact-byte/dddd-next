@@ -12,12 +12,83 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/net/icmp"
 )
+
+var DefaultTCPPingPorts = []int{80, 443, 22, 3389, 445}
+
+// CheckLiveTCP returns hosts with at least one of ports open — a TCP liveness
+// pre-filter for networks that drop ICMP but still answer TCP.
+func CheckLiveTCP(ctx context.Context, hosts []string, ports []int, timeoutSeconds int) []string {
+	if len(hosts) == 0 {
+		return nil
+	}
+	if len(ports) == 0 {
+		ports = DefaultTCPPingPorts
+	}
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	const maxConcurrent = 256
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	aliveSet := make(map[string]struct{})
+
+loop:
+	for _, host := range hosts {
+		select {
+		case <-ctx.Done():
+			break loop
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func(host string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			for _, port := range ports {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				if tcpOpen(ctx, host, port, timeout) {
+					mu.Lock()
+					aliveSet[host] = struct{}{}
+					mu.Unlock()
+					return
+				}
+			}
+		}(host)
+	}
+	wg.Wait()
+
+	alive := make([]string, 0, len(aliveSet))
+	for _, host := range hosts { // preserve input order, drop duplicates
+		if _, ok := aliveSet[host]; ok {
+			alive = append(alive, host)
+			delete(aliveSet, host)
+		}
+	}
+	return alive
+}
+
+func tcpOpen(ctx context.Context, host string, port int, timeout time.Duration) bool {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
 
 // CheckLive returns the subset of hosts that answer ICMP. forcePing skips the
 // raw-socket attempt and goes straight to the system ping command (useful when

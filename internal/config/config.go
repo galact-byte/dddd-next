@@ -24,13 +24,18 @@ type Config struct {
 	NoPassiveSubfinder bool
 	ProxyURL           string
 
-	PingFirst     bool
-	SkipCDN       bool
-	AllowCDN      bool
-	SkipDir       bool
-	Ports         string
-	ExcludePorts  string
+	PingFirst      bool
+	TCPPing        bool
+	SkipCDN        bool
+	AllowCDN       bool
+	SkipDir        bool
+	NoHostBind     bool
+	Ports          string
+	ExcludePorts   string
 	PortsThreshold int
+
+	OnlyIPPort           bool
+	AllowLocalAreaDomain bool
 
 	FullScan          bool
 	DisableGeneralPoc bool
@@ -40,10 +45,10 @@ type Config struct {
 	Tags            []string
 	ExcludeTags     []string
 
-	NoBrute       bool
-	NoPoc         bool
-	NoGoPoc       bool
-	NoInteractsh  bool
+	NoBrute      bool
+	NoPoc        bool
+	NoGoPoc      bool
+	NoInteractsh bool
 
 	CustomCreds     []string
 	CustomCredsFile string
@@ -56,16 +61,16 @@ type Config struct {
 	ProxyTest    bool
 	ProxyTestURL string
 
-	ScanType            string
-	SYNScanRate         int
-	TCPPortScanThreads   int
-	PortScanTimeout      int
-	ServiceDetectThreads int
-	ServiceDetectTimeout int
+	ScanType              string
+	SYNScanRate           int
+	TCPPortScanThreads    int
+	PortScanTimeout       int
+	ServiceDetectThreads  int
+	ServiceDetectTimeout  int
 	SubdomainBruteThreads int
-	WebThreads           int
-	WebTimeout           int
-	GoPocThreads         int
+	WebThreads            int
+	WebTimeout            int
+	GoPocThreads          int
 
 	LogLevel     string
 	AuditLogFile string
@@ -75,23 +80,23 @@ type Config struct {
 
 func Defaults() Config {
 	return Config{
-		Output:               "result.txt",
-		OutputType:           "text",
-		PortsThreshold:       300,
-		ProxyTest:            false,
-		ProxyTestURL:         "https://www.baidu.com",
-		ScanType:             "tcp",
-		SYNScanRate:          10000,
-		TCPPortScanThreads:   1000,
-		PortScanTimeout:      6,
-		ServiceDetectThreads: 500,
-		ServiceDetectTimeout: 5,
+		Output:                "result.txt",
+		OutputType:            "text",
+		PortsThreshold:        300,
+		ProxyTest:             false,
+		ProxyTestURL:          "https://www.baidu.com",
+		ScanType:              "tcp",
+		SYNScanRate:           10000,
+		TCPPortScanThreads:    1000,
+		PortScanTimeout:       6,
+		ServiceDetectThreads:  500,
+		ServiceDetectTimeout:  5,
 		SubdomainBruteThreads: 150,
-		WebThreads:           200,
-		WebTimeout:           10,
-		GoPocThreads:         50,
-		LogLevel:             "info",
-		AuditLogFile:         "audit.log",
+		WebThreads:            200,
+		WebTimeout:            10,
+		GoPocThreads:          50,
+		LogLevel:              "info",
+		AuditLogFile:          "audit.log",
 	}
 }
 
@@ -131,9 +136,13 @@ func ParseArgs(args []string) (Config, error) {
 	fs.StringVar(&cfg.ProxyURL, "proxy", cfg.ProxyURL, "HTTP/SOCKS5 proxy URL")
 
 	fs.BoolVar(&cfg.PingFirst, "ping", cfg.PingFirst, "ICMP-ping first, only scan responding hosts")
+	fs.BoolVar(&cfg.TCPPing, "tp", cfg.TCPPing, "TCP-connect liveness probe (use with or instead of -ping)")
 	fs.BoolVar(&cfg.SkipCDN, "skip-cdn", cfg.SkipCDN, "skip CDN/WAF-fronted domains entirely")
 	fs.BoolVar(&cfg.AllowCDN, "ac", cfg.AllowCDN, "allow scanning CDN assets (default: skip)")
 	fs.BoolVar(&cfg.SkipDir, "no-dir", cfg.SkipDir, "skip product-path probing")
+	fs.BoolVar(&cfg.NoHostBind, "nhb", cfg.NoHostBind, "disable domain-bound (vhost) asset probing")
+	fs.BoolVar(&cfg.OnlyIPPort, "oip", cfg.OnlyIPPort, "pull recon assets as IP:Port instead of Domain:Port")
+	fs.BoolVar(&cfg.AllowLocalAreaDomain, "ld", cfg.AllowLocalAreaDomain, "keep recon assets resolving to LAN/private IPs")
 	fs.StringVar(&cfg.Ports, "p", cfg.Ports, "port spec: \"80,443,8000-8100\" or \"all\" for 1-65535")
 	fs.StringVar(&cfg.ExcludePorts, "np", cfg.ExcludePorts, "exclude ports (comma-separated)")
 	fs.IntVar(&cfg.PortsThreshold, "pmc", cfg.PortsThreshold, "max open ports per IP before dropping it as firewalled")

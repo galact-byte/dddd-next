@@ -33,6 +33,37 @@
 > - v0.1.28-shiro: 专用 Shiro-550 rememberMe 密钥爆破，**补齐与原版 149 键差距**——nuclei 的 `shiro-deserialization-detection` 只测 51 键，原版用全部 200 键 `shirokeys.txt`(真实案例集中前 51，但尾部 149 在红队库/CTF 仍覆盖)。写专用 `internal/scanner/shiro`(crypto/aes CBC+GCM、deleteMe 判定门、双重确认减误报)，**0 新依赖**(标准库 net/http+crypto)。接入 `pipeline.shiroScan`(并发限 10 防猛打)。单测用 httptest 搭仿真 shiro 服务器端到端验证命中+检测门+不误报。**gopocs 真正 17/17**(shiro 原版算 gopocs 一员，小幽从 17 协议清单严格对齐)。22 包回归全绿
 > - v0.1.29-controls: 扫描精细控制——补齐原版全部控制开关（nuclei 过滤、阶段跳过、自定义凭据）。22 包回归全绿
 > - v0.1.30-rpc+cli: **补齐原版第18个gopocs(RPC-GetHostInfo)** + CLI开关补全6项(-alf/-ns/-ngp/-np/-ni/-poc)。22 包回归全绿
+> - v0.1.31-parity: 补齐诚实复盘漏算的剩余缺口——**SYN 扫描接线**(原 `synScan` 是死代码、`-st syn` 静默降级 TCP，修复并改掉传给 naabu 的非法 `"top1000"` 端口默认值)、**vhost 域名绑定资产探测**(原版 `HostBindCheck`，对 IP 型存活根用域名 Host 重探，发现非标端口上的虚拟主机；`-nhb` 关)、**TCP-Ping 主机发现**(`-tp`)、`-oip`/`-ld` 控制开关；附带修复 `-tst`/`-pst`/`-np`/`-pmc` 此前"定义却未接线"、Windows cmd 启用 VT 让 ANSI 颜色真正显示。**诚实声明**：Hunter 低感知模式(`-lpm`)未补——它依赖 Hunter 返回响应体，而 projectdiscovery/uncover 只暴露 host/port/url/ip，需自写 Hunter 客户端，留作独立任务。23 包回归全绿
+
+---
+
+## v0.1.31-parity — SYN 接线 / vhost / TCP-Ping / 控制开关（诚实复盘的剩余缺口）
+
+> 与原版逐项核对后，补齐除 Hunter 低感知模式外的全部剩余缺口。低感知模式依赖 Hunter 返回的响应体本地判指纹，而 `projectdiscovery/uncover` 的 `sources.Result` 只暴露 host/port/url/ip，需自写 Hunter API 客户端方能忠实复刻，本次不做、留作独立任务（不假装完成）。
+
+### 新增文件
+
+#### `internal/app/vtmode_windows.go` — Windows ANSI 颜色启用
+- cmd.exe 默认不解析 ANSI 转义序列（既有彩色输出在 cmd 里全是白的）。启动时对 stdout/stderr 调 `SetConsoleMode` 开启 `ENABLE_VIRTUAL_TERMINAL_PROCESSING`，让既有 + 新增的彩色输出生效；失败（重定向/旧版控制台）则降级为无色，不影响功能。
+
+### 修改文件
+
+#### `internal/app/pipeline.go` — SYN 接线 + vhost + TCP-Ping + 接线缺口修复
+- **#3 SYN 接线**：`scanPorts` 按 `-st syn` 分流到 `synScan`，raw socket 不可用时回退 TCP connect；`synScan` 改返回 `(results, ok)` 以表达回退信号；新增 `synPortSpec` 修复传给 naabu 的端口规格——原代码传 `"top1000"`，naabu 不认该别名 → `-st syn` 此前必然失败（死代码）。
+- **#1 vhost**：`recordHostIPs` 从 DNS 解析结果 + httpx `Response.A` 建立 ip→域名映射；`vhostProbe` 对 IP 型存活根用每个解析到该 IP 的域名作 Host 重探 `scheme://domain:port`，命中喂指纹/POC，发现非标端口上只认域名的虚拟主机；`-nhb` 关闭。
+- **#5 TCP-Ping**：`hostDiscovery` 合并 ICMP(`-ping`) 与 TCP(`-tp`) 探活，任一命中即视为存活。
+- **#4 `-oip`/`-ld`**：`recon` 按 `-oip` 用 IP:Port 形式拉取测绘资产；`-ld` 控制是否保留解析到内网/私有 IP 的资产。
+- **顺带修复"定义却未接线"**：`filterByPortThreshold`(`-pmc`)、`excludeFrom`(`-np`)、`-tst`/`-pst` 线程与超时此前均未真正生效，本次在 `tcpScan` 接入。
+
+#### `internal/discovery/hostalive/hostalive.go` — TCP 探活
+- 新增 `CheckLiveTCP`：对 80/443/22/3389/445 做 TCP connect，命中任一端口即判存活——封 ICMP 网络的兜底。
+
+#### `internal/config/config.go` + `cmd/dddd/main.go` — 新增 4 个 flag
+- `-tp` / `-nhb` / `-oip` / `-ld`，help 文本同步。
+
+### 测试方式
+- `go build ./cmd/dddd` 通过；`go vet` 干净；`go test ./...` **23 包全绿**。
+- 局限：SYN 扫描需 npcap/管理员权限、vhost 需多域名同 IP 的真实环境方能完整观测运行时行为，本次为逻辑层 + 编译 + 回归验证，未做多机真机联测。
 
 ---
 

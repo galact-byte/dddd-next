@@ -21,7 +21,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.30-dev"
+	appVersion = "0.1.31-dev"
 )
 
 func main() {
@@ -117,9 +117,13 @@ Scan flags:
   -np <ports>     exclude specific ports (comma-separated)
   -pmc <n>        max open ports per IP before dropping as firewalled (default 300)
   -ping           ICMP-ping first, only scan responding hosts
+  -tp             TCP-connect liveness probe (use with or instead of -ping)
   -skip-cdn       exclude CDN/WAF-fronted domains
   -ac             allow scanning CDN assets (overrides -skip-cdn)
   -no-dir         skip product-path probing (/nacos/, /druid/, ...)
+  -nhb            disable domain-bound (vhost) asset probing
+  -oip            pull recon assets as IP:Port instead of Domain:Port
+  -ld             keep recon assets that resolve to LAN/private IPs
 
   -full           run all nuclei templates instead of fingerprint-matched POCs
   -no-general     skip the product-independent General-Poc set (precise mode)
