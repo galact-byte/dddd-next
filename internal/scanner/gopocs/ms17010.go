@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -36,19 +37,37 @@ func probeMS17010(ctx context.Context, host string, port int, timeout time.Durat
 	reply := make([]byte, 1024)
 
 	if _, err := conn.Write(ms17010Negotiate); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ms17010 negotiate write: %w", err)
 	}
-	if n, err := conn.Read(reply); err != nil || n < 36 || binary.LittleEndian.Uint32(reply[9:13]) != 0 {
-		return nil, err
+	nr, err := conn.Read(reply)
+	if err != nil {
+		return nil, fmt.Errorf("ms17010 negotiate read: %w", err)
+	}
+	if nr < 36 {
+		return nil, fmt.Errorf("ms17010 negotiate: short response %d bytes", nr)
+	}
+	status := binary.LittleEndian.Uint32(reply[9:13])
+	if status != 0 {
+		fmt.Printf("[*] ms17010: %s:%d SMBv1 negotiate failed (NT=0x%08X, patched)\n", host, port, status)
+		return nil, nil
 	}
 
 	if _, err := conn.Write(ms17010SessionSetup); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ms17010 session-setup write: %w", err)
 	}
-	n, err := conn.Read(reply)
-	if err != nil || n < 36 || binary.LittleEndian.Uint32(reply[9:13]) != 0 {
-		return nil, err
+	nr, err = conn.Read(reply)
+	if err != nil {
+		return nil, fmt.Errorf("ms17010 session-setup read: %w", err)
 	}
+	if nr < 36 {
+		return nil, fmt.Errorf("ms17010 session-setup: short response %d bytes", nr)
+	}
+	status = binary.LittleEndian.Uint32(reply[9:13])
+	if status != 0 {
+		fmt.Printf("[*] ms17010: %s:%d SMBv1 session failed (NT=0x%08X)\n", host, port, status)
+		return nil, nil
+	}
+	n := nr
 	osName := ms17010OS(reply[:n])
 	userID := []byte{reply[32], reply[33]}
 
@@ -57,12 +76,22 @@ func probeMS17010(ctx context.Context, host string, port int, timeout time.Durat
 	tree := append([]byte(nil), ms17010TreeConnect...)
 	tree[32], tree[33] = userID[0], userID[1]
 	if _, err := conn.Write(tree); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ms17010 tree-connect write: %w", err)
 	}
-	if n, err := conn.Read(reply); err != nil || n < 36 {
-		return nil, err
+	tn, terr := conn.Read(reply)
+	if terr != nil {
+		return nil, fmt.Errorf("ms17010 tree-connect read: %w", terr)
+	}
+	if tn < 36 {
+		return nil, fmt.Errorf("ms17010 tree-connect: short response %d bytes", tn)
+	}
+	treeStatus := binary.LittleEndian.Uint32(reply[9:13])
+	if treeStatus != 0 {
+		fmt.Printf("[*] ms17010: %s:%d IPC$ tree connect failed (NT=0x%08X)\n", host, port, treeStatus)
+		return nil, nil
 	}
 	treeID := []byte{reply[28], reply[29]}
+	_ = tn
 
 	pipe := append([]byte(nil), ms17010TransNamedPipe...)
 	pipe[28], pipe[29] = treeID[0], treeID[1]
@@ -89,6 +118,7 @@ func probeMS17010(ctx context.Context, host string, port int, timeout time.Durat
 			DiscoveredAt: time.Now(),
 		}, nil
 	}
+	fmt.Printf("[*] ms17010: %s:%d trans status=0x%02X%02X%02X%02X (not vulnerable)\n", host, port, reply[9], reply[10], reply[11], reply[12])
 	return nil, nil
 }
 

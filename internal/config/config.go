@@ -1,7 +1,3 @@
-// Package config holds runtime configuration loaded from CLI flags and
-// (later) YAML files. Right now we deliberately use only the standard
-// library so the foundational modules can compile without pulling in
-// cobra / viper / koanf — those land once the CLI surface stabilises.
 package config
 
 import (
@@ -14,11 +10,6 @@ import (
 	"strings"
 )
 
-// Config is the resolved configuration for a single run.
-//
-// Only fields the foundational pipeline already needs live here. Modules
-// added later (scanner, reporter, updater) extend this struct via PRs —
-// keep it small so missing wiring stays obvious.
 type Config struct {
 	Targets     []string
 	TargetsFile string
@@ -28,14 +19,18 @@ type Config struct {
 	HTMLOutput string
 	AuditLog   bool
 
-	Subdomain  bool
-	NoSubBrute bool
-	ProxyURL   string
+	Subdomain          bool
+	NoSubBrute         bool
+	NoPassiveSubfinder bool
+	ProxyURL           string
 
-	PingFirst bool
-	SkipCDN   bool
-	SkipDir   bool
-	Ports     string
+	PingFirst     bool
+	SkipCDN       bool
+	AllowCDN      bool
+	SkipDir       bool
+	Ports         string
+	ExcludePorts  string
+	PortsThreshold int
 
 	FullScan          bool
 	DisableGeneralPoc bool
@@ -45,32 +40,61 @@ type Config struct {
 	Tags            []string
 	ExcludeTags     []string
 
-	NoBrute bool
-	NoPoc   bool
+	NoBrute       bool
+	NoPoc         bool
+	NoGoPoc       bool
+	NoInteractsh  bool
 
 	CustomCreds     []string
 	CustomCredsFile string
 
-	LogLevel string
+	PocName string
+
+	InteractshServer string
+	InteractshToken  string
+
+	ProxyTest    bool
+	ProxyTestURL string
+
+	ScanType            string
+	SYNScanRate         int
+	TCPPortScanThreads   int
+	PortScanTimeout      int
+	ServiceDetectThreads int
+	ServiceDetectTimeout int
+	SubdomainBruteThreads int
+	WebThreads           int
+	WebTimeout           int
+	GoPocThreads         int
+
+	LogLevel     string
+	AuditLogFile string
 
 	Subcommand string
 }
 
-// Defaults returns a Config with sane non-zero defaults applied.
 func Defaults() Config {
 	return Config{
-		Output:     "result.txt",
-		OutputType: "text",
-		HTMLOutput: "",
-		LogLevel:   "info",
+		Output:               "result.txt",
+		OutputType:           "text",
+		PortsThreshold:       300,
+		ProxyTest:            false,
+		ProxyTestURL:         "https://www.baidu.com",
+		ScanType:             "tcp",
+		SYNScanRate:          10000,
+		TCPPortScanThreads:   1000,
+		PortScanTimeout:      6,
+		ServiceDetectThreads: 500,
+		ServiceDetectTimeout: 5,
+		SubdomainBruteThreads: 150,
+		WebThreads:           200,
+		WebTimeout:           10,
+		GoPocThreads:         50,
+		LogLevel:             "info",
+		AuditLogFile:         "audit.log",
 	}
 }
 
-// ParseArgs builds a Config from os.Args-style input. It accepts the program
-// name as args[0] (matching os.Args layout) and parses the rest.
-//
-// Errors come back wrapped so callers can decide whether to log-and-exit
-// or surface them in tests.
 func ParseArgs(args []string) (Config, error) {
 	if len(args) == 0 {
 		return Config{}, errors.New("config: args is empty (missing program name)")
@@ -99,33 +123,59 @@ func ParseArgs(args []string) (Config, error) {
 	fs.StringVar(&cfg.Output, "o", cfg.Output, "result output file")
 	fs.StringVar(&cfg.OutputType, "ot", cfg.OutputType, "output format: text | json")
 	fs.StringVar(&cfg.HTMLOutput, "ho", cfg.HTMLOutput, "HTML report file (empty disables)")
-	fs.BoolVar(&cfg.AuditLog, "a", cfg.AuditLog, "enable audit log (audit.log)")
+	fs.BoolVar(&cfg.AuditLog, "a", cfg.AuditLog, "enable audit log")
 
 	fs.BoolVar(&cfg.Subdomain, "sd", cfg.Subdomain, "enumerate subdomains for domain targets")
-	fs.BoolVar(&cfg.NoSubBrute, "nsb", cfg.NoSubBrute, "skip active subdomain brute-force (passive subfinder only) under -sd")
-	fs.StringVar(&cfg.ProxyURL, "proxy", cfg.ProxyURL, "HTTP/SOCKS5 proxy URL for outgoing requests")
+	fs.BoolVar(&cfg.NoSubBrute, "nsb", cfg.NoSubBrute, "skip active subdomain brute-force")
+	fs.BoolVar(&cfg.NoPassiveSubfinder, "ns", cfg.NoPassiveSubfinder, "skip passive subdomain enumeration (subfinder)")
+	fs.StringVar(&cfg.ProxyURL, "proxy", cfg.ProxyURL, "HTTP/SOCKS5 proxy URL")
 
-	fs.BoolVar(&cfg.PingFirst, "ping", cfg.PingFirst, "ICMP-ping hosts first and only port-scan those that reply (faster on large ranges; skips ICMP-blocking hosts)")
-	fs.BoolVar(&cfg.SkipCDN, "skip-cdn", cfg.SkipCDN, "skip probing domains identified as CDN/WAF-fronted (default: identify and flag, but still probe)")
-	fs.BoolVar(&cfg.SkipDir, "no-dir", cfg.SkipDir, "skip probing well-known product paths (/nacos/, /druid/, ...) on live web roots")
-	fs.StringVar(&cfg.Ports, "p", cfg.Ports, "ports to scan: comma list / a-b ranges (\"80,443,8000-8100\") or \"all\" for 1-65535; empty uses the curated default set")
+	fs.BoolVar(&cfg.PingFirst, "ping", cfg.PingFirst, "ICMP-ping first, only scan responding hosts")
+	fs.BoolVar(&cfg.SkipCDN, "skip-cdn", cfg.SkipCDN, "skip CDN/WAF-fronted domains entirely")
+	fs.BoolVar(&cfg.AllowCDN, "ac", cfg.AllowCDN, "allow scanning CDN assets (default: skip)")
+	fs.BoolVar(&cfg.SkipDir, "no-dir", cfg.SkipDir, "skip product-path probing")
+	fs.StringVar(&cfg.Ports, "p", cfg.Ports, "port spec: \"80,443,8000-8100\" or \"all\" for 1-65535")
+	fs.StringVar(&cfg.ExcludePorts, "np", cfg.ExcludePorts, "exclude ports (comma-separated)")
+	fs.IntVar(&cfg.PortsThreshold, "pmc", cfg.PortsThreshold, "max open ports per IP before dropping it as firewalled")
 
-	fs.BoolVar(&cfg.FullScan, "full", cfg.FullScan, "run all nuclei templates instead of fingerprint-matched POCs")
-	fs.BoolVar(&cfg.DisableGeneralPoc, "no-general", cfg.DisableGeneralPoc, "skip the product-independent General-Poc set in precise mode")
+	fs.BoolVar(&cfg.FullScan, "full", cfg.FullScan, "run all nuclei templates")
+	fs.BoolVar(&cfg.DisableGeneralPoc, "no-general", cfg.DisableGeneralPoc, "skip General-Poc set in precise mode")
 
 	var severity, excludeSeverity, tags, excludeTags, customCreds stringList
-	fs.Var(&severity, "severity", "nuclei severity filter: critical,high,medium,low,info (repeatable)")
+	fs.Var(&severity, "severity", "nuclei severity filter (repeatable)")
 	fs.Var(&excludeSeverity, "exclude-severity", "exclude nuclei severities (repeatable)")
-	fs.Var(&tags, "tags", "nuclei template tags to include (repeatable)")
+	fs.Var(&tags, "tags", "nuclei template tags (repeatable)")
 	fs.Var(&excludeTags, "exclude-tags", "nuclei template tags to exclude (repeatable)")
 
-	fs.BoolVar(&cfg.NoBrute, "no-brute", cfg.NoBrute, "skip weak-credential brute-force (gopocs)")
-	fs.BoolVar(&cfg.NoPoc, "no-poc", cfg.NoPoc, "skip POC/exploit checks (nuclei + shiro)")
+	fs.BoolVar(&cfg.NoBrute, "no-brute", cfg.NoBrute, "skip weak-credential brute-force")
+	fs.BoolVar(&cfg.NoPoc, "no-poc", cfg.NoPoc, "skip all POC/exploit checks")
+	fs.BoolVar(&cfg.NoGoPoc, "ngp", cfg.NoGoPoc, "skip gopocs only (nuclei+shiro still run)")
+	fs.BoolVar(&cfg.NoInteractsh, "ni", cfg.NoInteractsh, "disable interactsh OOB server")
 
 	fs.Var(&customCreds, "up", "custom credential user:pass (repeatable)")
 	fs.StringVar(&cfg.CustomCredsFile, "upf", cfg.CustomCredsFile, "custom credential file (user:pass per line)")
 
+	fs.StringVar(&cfg.PocName, "poc", cfg.PocName, "fuzzy-match POC template by name/id")
+
+	fs.StringVar(&cfg.InteractshServer, "iserver", cfg.InteractshServer, "custom interactsh server URL")
+	fs.StringVar(&cfg.InteractshToken, "itoken", cfg.InteractshToken, "interactsh auth token")
+
+	fs.BoolVar(&cfg.ProxyTest, "pt", cfg.ProxyTest, "test proxy before use")
+	fs.StringVar(&cfg.ProxyTestURL, "ptu", cfg.ProxyTestURL, "URL for proxy test")
+
+	fs.StringVar(&cfg.ScanType, "st", cfg.ScanType, "scan type: tcp (connect) | syn (requires npcap/admin)")
+	fs.IntVar(&cfg.SYNScanRate, "sst", cfg.SYNScanRate, "SYN scan packet rate (default 10000)")
+	fs.IntVar(&cfg.TCPPortScanThreads, "tst", cfg.TCPPortScanThreads, "TCP port scan threads")
+	fs.IntVar(&cfg.PortScanTimeout, "pst", cfg.PortScanTimeout, "TCP port scan timeout (seconds)")
+	fs.IntVar(&cfg.ServiceDetectThreads, "tc", cfg.ServiceDetectThreads, "service detection threads")
+	fs.IntVar(&cfg.ServiceDetectTimeout, "nto", cfg.ServiceDetectTimeout, "service detection timeout (seconds)")
+	fs.IntVar(&cfg.SubdomainBruteThreads, "sbt", cfg.SubdomainBruteThreads, "subdomain brute-force threads")
+	fs.IntVar(&cfg.WebThreads, "wt", cfg.WebThreads, "Web probe threads")
+	fs.IntVar(&cfg.WebTimeout, "wto", cfg.WebTimeout, "Web probe timeout (seconds)")
+	fs.IntVar(&cfg.GoPocThreads, "gpt", cfg.GoPocThreads, "GoPoC threads")
+
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level: debug | info | warn | error")
+	fs.StringVar(&cfg.AuditLogFile, "alf", cfg.AuditLogFile, "audit log filename")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return cfg, fmt.Errorf("config: parse flags: %w", err)
@@ -157,7 +207,6 @@ func ParseArgs(args []string) (Config, error) {
 	return cfg, nil
 }
 
-// Validate checks the resolved Config is internally consistent.
 func (c Config) Validate() error {
 	if c.Subcommand != "" {
 		return nil
@@ -178,7 +227,6 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// stringList lets a flag accept multiple values via repetition.
 type stringList []string
 
 func (s *stringList) String() string     { return strings.Join(*s, ",") }
@@ -203,10 +251,6 @@ func readLines(path string) ([]string, error) {
 	return out, scanner.Err()
 }
 
-// LoadDotEnv reads KEY=VALUE lines from a .env file and exports any key not
-// already set in the environment, so an explicit shell `export` always wins.
-// A missing file is not an error: .env is optional and only carries local
-// secrets (recon API keys) that must never be committed.
 func LoadDotEnv(path string) error {
 	f, err := os.Open(path)
 	if err != nil {

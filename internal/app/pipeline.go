@@ -30,6 +30,7 @@ import (
 	"dddd-next/internal/discovery/servicedetect"
 	"dddd-next/internal/discovery/subbrute"
 	"dddd-next/internal/discovery/subfinder"
+	"dddd-next/internal/discovery/synscan"
 	"dddd-next/internal/discovery/uncover"
 	"dddd-next/internal/fingerprint"
 	"dddd-next/internal/reporter"
@@ -64,7 +65,7 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 
 	aud := audit.Disabled()
 	if cfg.AuditLog {
-		a, aerr := audit.NewFile("audit.log")
+		a, aerr := audit.NewFile(cfg.AuditLogFile)
 		if aerr != nil {
 			_ = rep.Close()
 			return nil, fmt.Errorf("app: open audit log: %w", aerr)
@@ -72,7 +73,7 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 		aud = a
 	}
 
-	fmt.Printf("[*] fingerprints loaded: %d rules\n", eng.Size())
+	fmt.Printf("[32m[*][0m fingerprints loaded: %d rules\n", eng.Size())
 	return &Pipeline{cfg: cfg, configDir: configDir, finger: eng, reporter: rep, auditor: aud}, nil
 }
 
@@ -107,13 +108,13 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 	probeInputs = dedup(probeInputs)
 	if len(probeInputs) == 0 {
-		fmt.Println("[!] no probeable targets after discovery")
+		fmt.Println("[31m[!][0m no probeable targets after discovery")
 		return nil
 	}
 
 	liveURLs, fpHits := p.probeAndFingerprint(ctx, probeInputs)
 	if len(liveURLs) > 0 && !p.cfg.SkipDir {
-		dirURLs, dirHits := p.dirProbe(ctx, liveURLs)
+		dirURLs, dirHits := p.dirProbe(ctx, stripPaths(liveURLs))
 		liveURLs = dedup(append(liveURLs, dirURLs...))
 		for u, names := range dirHits {
 			fpHits[u] = append(fpHits[u], names...)
@@ -150,7 +151,7 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 	for _, raw := range p.cfg.Targets {
 		t, err := classifier.Parse(raw)
 		if err != nil {
-			fmt.Printf("[!] skip %q: %v\n", raw, err)
+			fmt.Printf("[31m[!][0m skip %q: %v\n", raw, err)
 			continue
 		}
 		switch t.Type {
@@ -165,7 +166,7 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 		case types.InputSearchQuery:
 			searchQueries = append(searchQueries, t.Raw)
 		default:
-			fmt.Printf("[!] %q: unrecognized input, skipped\n", raw)
+			fmt.Printf("[31m[!][0m %q: unrecognized input, skipped\n", raw)
 		}
 	}
 	return probeInputs, domains, portscanSpecs, searchQueries
@@ -177,14 +178,14 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Result {
 	hosts, err := portscan.ExpandHosts(specs)
 	if err != nil {
-		fmt.Printf("[!] portscan: %v\n", err)
+		fmt.Printf("[31m[!][0m portscan: %v\n", err)
 		return nil
 	}
 
 	if p.cfg.PingFirst {
 		before := len(hosts)
 		hosts = hostalive.CheckLive(ctx, hosts, false)
-		fmt.Printf("[*] ICMP liveness: %d/%d host(s) responded\n", len(hosts), before)
+		fmt.Printf("[32m[*][0m ICMP liveness: %d/%d host(s) responded\n", len(hosts), before)
 		if len(hosts) == 0 {
 			return nil
 		}
@@ -194,13 +195,13 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 	if p.cfg.Ports != "" {
 		ports, perr := portscan.ParsePortSpec(p.cfg.Ports)
 		if perr != nil {
-			fmt.Printf("[!] %v\n", perr)
+			fmt.Printf("[31m[!][0m %v\n", perr)
 			return nil
 		}
 		opts.Ports = ports
 	}
 
-	fmt.Printf("[*] port scanning %d host(s) x %d ports...\n", len(hosts), len(opts.Ports))
+	fmt.Printf("[32m[*][0m port scanning %d host(s) x %d ports...\n", len(hosts), len(opts.Ports))
 
 	sc := portscan.New(opts)
 	var open []portscan.Result
@@ -208,7 +209,29 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 		open = append(open, r)
 		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
-	fmt.Printf("[*] open ports: %d\n", len(open))
+	fmt.Printf("[32m[*][0m open ports: %d\n", len(open))
+	return open
+}
+
+func (p *Pipeline) synScan(ctx context.Context, hosts []string) []portscan.Result {
+	ports := p.cfg.Ports
+	if ports == "" {
+		ports = "top1000"
+	}
+	fmt.Printf("[36m[SYN][0m scanning %d host(s)...\n", len(hosts))
+	opts := synscan.DefaultOptions()
+	opts.Rate = p.cfg.SYNScanRate
+	results, err := synscan.Scan(ctx, hosts, ports, opts)
+	if err != nil {
+		fmt.Printf("[31m[!][0m synscan: %v\n", err)
+		return nil
+	}
+	var open []portscan.Result
+	for _, r := range results {
+		open = append(open, portscan.Result{Host: r.Host, Port: r.Port})
+		fmt.Printf("  %s:%d\n", r.Host, r.Port)
+		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
+	}
 	return open
 }
 
@@ -227,7 +250,7 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result, 
 	}
 
 	dictDir := filepath.Join(p.configDir, "dict")
-	fmt.Printf("[*] weak-credential brute force on %d open port(s)...\n", len(endpoints))
+	fmt.Printf("[32m[*][0m weak-credential brute force on %d open port(s)...\n", len(endpoints))
 	opts := gopocs.DefaultOptions(dictDir)
 	opts.CustomCreds = p.cfg.CustomCreds
 	eng := gopocs.New(opts)
@@ -235,14 +258,14 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result, 
 	n := 0
 	for f := range eng.Run(ctx, endpoints) {
 		if werr := p.reporter.WriteFinding(f); werr != nil {
-			fmt.Printf("[!] report: %v\n", werr)
+			fmt.Printf("[31m[!][0m report: %v\n", werr)
 		}
 		_ = p.auditor.LogInfo("weak-cred", map[string]any{
 			"id": f.ID, "target": f.Target, "desc": f.Description,
 		})
 		n++
 	}
-	fmt.Printf("[*] weak credentials: %d\n", n)
+	fmt.Printf("[32m[*][0m weak credentials: %d\n", n)
 }
 
 // detectServices fingerprints each open port so brute forcing routes by the
@@ -252,20 +275,24 @@ func (p *Pipeline) detectServices(ctx context.Context, openPorts []portscan.Resu
 	for _, r := range openPorts {
 		eps = append(eps, servicedetect.Endpoint{Host: r.Host, Port: r.Port})
 	}
-	fmt.Printf("[*] fingerprinting %d open port(s)...\n", len(eps))
+	fmt.Printf("[32m[*][0m fingerprinting %d open port(s)...\n", len(eps))
 
-	det := servicedetect.New(servicedetect.DefaultOptions())
+	svcOpts := servicedetect.DefaultOptions()
+	svcOpts.Threads = p.cfg.ServiceDetectThreads
+	svcOpts.TimeoutSeconds = p.cfg.ServiceDetectTimeout
+	det := servicedetect.New(svcOpts)
 	out := make(map[string]string)
 	for res := range det.Detect(ctx, eps) {
 		if res.Service == "" {
 			continue
 		}
 		out[fmt.Sprintf("%s:%d", res.Host, res.Port)] = res.Service
+		fmt.Printf("  %s://%s:%d\n", res.Service, res.Host, res.Port)
 		_ = p.auditor.LogInfo("service", map[string]any{
 			"host": res.Host, "port": res.Port, "service": res.Service, "version": res.Version,
 		})
 	}
-	fmt.Printf("[*] services identified: %d\n", len(out))
+	fmt.Printf("[32m[*][0m services identified: %d\n", len(out))
 	return out
 }
 
@@ -274,7 +301,7 @@ func (p *Pipeline) detectServices(ctx context.Context, openPorts []portscan.Resu
 // port scanner. It needs internet egress and API keys (env vars); a missing-key
 // error is reported per query, not fatal.
 func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Result {
-	fmt.Printf("[*] recon: %d search query(ies) via fofa/hunter/quake...\n", len(queries))
+	fmt.Printf("[32m[*][0m recon: %d search query(ies) via fofa/hunter/quake...\n", len(queries))
 	opts := uncover.DefaultOptions()
 	opts.Proxy = p.cfg.ProxyURL
 	src := uncover.New(opts)
@@ -284,7 +311,7 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 	for _, q := range queries {
 		assets, err := src.Query(ctx, q, 0)
 		if err != nil {
-			fmt.Printf("[!] recon %q: %v\n", q, err)
+			fmt.Printf("[31m[!][0m recon %q: %v\n", q, err)
 			continue
 		}
 		for _, a := range assets {
@@ -304,12 +331,12 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 			_ = p.auditor.LogInfo("recon", map[string]any{"source": a.Source, "host": host, "port": a.Port, "url": a.URL})
 		}
 	}
-	fmt.Printf("[*] recon assets: %d\n", len(results))
+	fmt.Printf("[32m[*][0m recon assets: %d\n", len(results))
 	return results
 }
 
 func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []string {
-	fmt.Printf("[*] subdomain enumeration for %d domain(s)...\n", len(domains))
+	fmt.Printf("[32m[*][0m subdomain enumeration for %d domain(s)...\n", len(domains))
 
 	set := make(map[string]struct{}, len(domains))
 	for _, d := range domains {
@@ -328,14 +355,14 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 	opts.Proxy = p.cfg.ProxyURL
 	results, errCh, err := subfinder.New(opts).Run(ctx)
 	if err != nil {
-		fmt.Printf("[!] subfinder: %v\n", err) // keep brute results; don't abort enum
+		fmt.Printf("[31m[!][0m subfinder: %v\n", err) // keep brute results; don't abort enum
 	} else {
 		for r := range results {
 			set[r.Host] = struct{}{}
 		}
 		for e := range errCh {
 			if e != nil {
-				fmt.Printf("[!] subfinder: %v\n", e)
+				fmt.Printf("[31m[!][0m subfinder: %v\n", e)
 			}
 		}
 	}
@@ -344,7 +371,7 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 	for d := range set {
 		out = append(out, d)
 	}
-	fmt.Printf("[*] subdomains: %d total\n", len(out))
+	fmt.Printf("[32m[*][0m subdomains: %d total\n", len(out))
 	return out
 }
 
@@ -354,20 +381,20 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []string {
 	words, err := subbrute.LoadWordlist(filepath.Join(p.configDir, "dict", "subdomains.txt"))
 	if err != nil {
-		fmt.Printf("[!] subbrute: %v; skipping brute-force\n", err)
+		fmt.Printf("[31m[!][0m subbrute: %v; skipping brute-force\n", err)
 		return nil
 	}
 
 	r, err := dnsx.New(dnsx.DefaultOptions())
 	if err != nil {
-		fmt.Printf("[!] subbrute dnsx: %v; skipping brute-force\n", err)
+		fmt.Printf("[31m[!][0m subbrute dnsx: %v; skipping brute-force\n", err)
 		return nil
 	}
 
 	var bruteable []string
 	for _, d := range domains {
 		if ips, _ := r.Resolve("zzqx9k7wildcardprobe." + d); len(ips) > 0 {
-			fmt.Printf("[*] subbrute: %s has wildcard DNS, skipping brute-force\n", d)
+			fmt.Printf("[32m[*][0m subbrute: %s has wildcard DNS, skipping brute-force\n", d)
 			continue
 		}
 		bruteable = append(bruteable, d)
@@ -377,7 +404,7 @@ func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []strin
 	}
 
 	candidates := subbrute.Candidates(bruteable, words)
-	fmt.Printf("[*] subbrute: resolving %d candidate(s) across %d domain(s)...\n", len(candidates), len(bruteable))
+	fmt.Printf("[32m[*][0m subbrute: resolving %d candidate(s) across %d domain(s)...\n", len(candidates), len(bruteable))
 
 	var found []string
 	for res := range r.ResolveMany(ctx, candidates) {
@@ -385,7 +412,7 @@ func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []strin
 			found = append(found, res.Host)
 		}
 	}
-	fmt.Printf("[*] subbrute: %d subdomain(s) resolved\n", len(found))
+	fmt.Printf("[32m[*][0m subbrute: %d subdomain(s) resolved\n", len(found))
 	return found
 }
 
@@ -393,7 +420,7 @@ func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []strin
 // IP is an edge, not the origin. Flagged domains are still probed by default
 // (probing through a CDN reaches the app); -skip-cdn excludes them.
 func (p *Pipeline) identifyCDN(ctx context.Context, domains []string) []string {
-	fmt.Printf("[*] CDN identification on %d domain(s)...\n", len(domains))
+	fmt.Printf("[32m[*][0m CDN identification on %d domain(s)...\n", len(domains))
 
 	results := make([]cdn.Result, len(domains))
 	sem := make(chan struct{}, 20)
@@ -430,9 +457,9 @@ func (p *Pipeline) identifyCDN(ctx context.Context, domains []string) []string {
 		keep = append(keep, d)
 	}
 	if p.cfg.SkipCDN {
-		fmt.Printf("[*] CDN: %d flagged and dropped (-skip-cdn), %d kept\n", flagged, len(keep))
+		fmt.Printf("[32m[*][0m CDN: %d flagged and dropped (-skip-cdn), %d kept\n", flagged, len(keep))
 	} else {
-		fmt.Printf("[*] CDN: %d flagged (still probed; -skip-cdn to exclude)\n", flagged)
+		fmt.Printf("[32m[*][0m CDN: %d flagged (still probed; -skip-cdn to exclude)\n", flagged)
 	}
 	return keep
 }
@@ -441,10 +468,10 @@ func (p *Pipeline) identifyCDN(ctx context.Context, domains []string) []string {
 // the host->IP mapping in the audit log. Dead names are dropped here so httpx
 // does not waste connections on them.
 func (p *Pipeline) resolveDomains(ctx context.Context, domains []string) []string {
-	fmt.Printf("[*] resolving %d domain(s)...\n", len(domains))
+	fmt.Printf("[32m[*][0m resolving %d domain(s)...\n", len(domains))
 	r, err := dnsx.New(dnsx.DefaultOptions())
 	if err != nil {
-		fmt.Printf("[!] dnsx: %v; passing domains through unresolved\n", err)
+		fmt.Printf("[31m[!][0m dnsx: %v; passing domains through unresolved\n", err)
 		return domains
 	}
 
@@ -456,14 +483,14 @@ func (p *Pipeline) resolveDomains(ctx context.Context, domains []string) []strin
 		live = append(live, res.Host)
 		_ = p.auditor.LogInfo("resolve", map[string]any{"host": res.Host, "ips": res.IPs})
 	}
-	fmt.Printf("[*] resolved (live): %d\n", len(live))
+	fmt.Printf("[32m[*][0m resolved (live): %d\n", len(live))
 	return live
 }
 
 // probeAndFingerprint returns the live URLs plus a map of URL → matched product
 // names, which the precise nuclei stage uses to pick each target's POCs.
 func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]string, map[string][]string) {
-	fmt.Printf("[*] HTTP probing %d target(s)...\n", len(inputs))
+	fmt.Printf("[32m[*][0m HTTP probing %d target(s)...\n", len(inputs))
 	probe := httpprobe.New(httpprobe.Options{
 		Targets:    inputs,
 		TechDetect: true,
@@ -471,7 +498,7 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 	})
 	ch, err := probe.Run(ctx)
 	if err != nil {
-		fmt.Printf("[!] httpx: %v\n", err)
+		fmt.Printf("[31m[!][0m httpx: %v\n", err)
 		return nil, nil
 	}
 
@@ -486,7 +513,7 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 		for _, fp := range p.finger.Match(httpprobe.ToFingerprintContext(resp)) {
 			fp.Target = resp.URL
 			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
-				fmt.Printf("[!] report: %v\n", werr)
+				fmt.Printf("[31m[!][0m report: %v\n", werr)
 			}
 			hits[resp.URL] = append(hits[resp.URL], fp.Name)
 			active++
@@ -500,13 +527,13 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 			}
 			fp := types.Fingerprint{Name: tech, Target: resp.URL, Source: "wappalyzer", Confidence: 75}
 			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
-				fmt.Printf("[!] report: %v\n", werr)
+				fmt.Printf("[31m[!][0m report: %v\n", werr)
 			}
 			hits[resp.URL] = append(hits[resp.URL], tech)
 			passive++
 		}
 	}
-	fmt.Printf("[*] live web: %d, fingerprint hits: %d active + %d passive(tech)\n", len(live), active, passive)
+	fmt.Printf("[32m[*][0m live web: %d, fingerprint hits: %d active + %d passive(tech)\n", len(live), active, passive)
 	return live, hits
 }
 
@@ -516,14 +543,14 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, map[string][]string) {
 	db, err := dirscan.Load(filepath.Join(p.configDir, "dir.yaml"))
 	if err != nil {
-		fmt.Printf("[!] dirscan: %v; skipping product-path probe\n", err)
+		fmt.Printf("[31m[!][0m dirscan: %v; skipping product-path probe\n", err)
 		return nil, nil
 	}
 	paths := db.Paths()
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	fmt.Printf("[*] product-path probe: %d path(s) across %d root(s)...\n", len(paths), len(baseURLs))
+	fmt.Printf("[32m[*][0m product-path probe: %d path(s) across %d root(s)...\n", len(paths), len(baseURLs))
 
 	probe := httpprobe.New(httpprobe.Options{
 		Targets:      baseURLs,
@@ -536,7 +563,7 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, m
 	})
 	ch, err := probe.Run(ctx)
 	if err != nil {
-		fmt.Printf("[!] dirscan httpx: %v\n", err)
+		fmt.Printf("[31m[!][0m dirscan httpx: %v\n", err)
 		return nil, nil
 	}
 
@@ -547,7 +574,7 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, m
 		for _, fp := range p.finger.Match(httpprobe.ToFingerprintContext(resp)) {
 			fp.Target = resp.URL
 			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
-				fmt.Printf("[!] report: %v\n", werr)
+				fmt.Printf("[31m[!][0m report: %v\n", werr)
 			}
 			hits[resp.URL] = append(hits[resp.URL], fp.Name)
 			matched = true
@@ -556,7 +583,7 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, m
 			urls = append(urls, resp.URL)
 		}
 	}
-	fmt.Printf("[*] product-path probe: %d path(s) matched a fingerprint\n", len(urls))
+	fmt.Printf("[32m[*][0m product-path probe: %d path(s) matched a fingerprint\n", len(urls))
 	return urls, hits
 }
 
@@ -566,11 +593,11 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, m
 func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 	keys, err := shiro.LoadKeys(filepath.Join(p.configDir, "dict", "shirokeys.txt"))
 	if err != nil {
-		fmt.Printf("[!] shiro: %v; skipping shiro check\n", err)
+		fmt.Printf("[31m[!][0m shiro: %v; skipping shiro check\n", err)
 		return
 	}
 	sc := shiro.New(keys, 10*time.Second, p.cfg.ProxyURL)
-	fmt.Printf("[*] shiro key check on %d web root(s) (%d keys)...\n", len(urls), len(keys))
+	fmt.Printf("[32m[*][0m shiro key check on %d web root(s) (%d keys)...\n", len(urls), len(keys))
 
 	sem := make(chan struct{}, 10)
 	var wg sync.WaitGroup
@@ -592,7 +619,7 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 				return
 			}
 			if werr := p.reporter.WriteFinding(*f); werr != nil {
-				fmt.Printf("[!] report: %v\n", werr)
+				fmt.Printf("[31m[!][0m report: %v\n", werr)
 			}
 			_ = p.auditor.LogInfo("finding", map[string]any{"id": f.ID, "severity": string(f.Severity), "target": f.Target})
 			mu.Lock()
@@ -601,7 +628,7 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 		}(u)
 	}
 	wg.Wait()
-	fmt.Printf("[*] shiro: %d weak key(s) found\n", hits)
+	fmt.Printf("[32m[*][0m shiro: %d weak key(s) found\n", hits)
 }
 
 // runNuclei scans the live URLs. Precise mode (default) loads only the POC
@@ -628,38 +655,38 @@ func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[stri
 	if p.cfg.FullScan {
 		tmplDir := filepath.Join(p.configDir, "nuclei-templates")
 		if info, err := os.Stat(tmplDir); err != nil || !info.IsDir() {
-			fmt.Printf("[!] nuclei templates not found at %s — run `dddd update` first; skipping vuln scan\n", tmplDir)
+			fmt.Printf("[31m[!][0m nuclei templates not found at %s — run `dddd update` first; skipping vuln scan\n", tmplDir)
 			return
 		}
 		opts.TemplatesDir = tmplDir
-		fmt.Printf("[*] nuclei full scan: %d target(s) x all templates...\n", len(urls))
+		fmt.Printf("[32m[*][0m nuclei full scan: %d target(s) x all templates...\n", len(urls))
 	} else {
 		pocs := p.resolvePOCs(fpHits)
 		if len(pocs) == 0 {
-			fmt.Println("[*] nuclei precise: no fingerprint-matched POCs, skipping vuln scan")
+			fmt.Println("[32m[*][0m nuclei precise: no fingerprint-matched POCs, skipping vuln scan")
 			return
 		}
 		opts.Templates = pocs
-		fmt.Printf("[*] nuclei precise scan: %d target(s) x %d matched POC(s)...\n", len(urls), len(pocs))
+		fmt.Printf("[32m[*][0m nuclei precise scan: %d target(s) x %d matched POC(s)...\n", len(urls), len(pocs))
 	}
 
 	sc, err := nuclei.New(ctx, opts)
 	if err != nil {
-		fmt.Printf("[!] nuclei init: %v\n", err)
+		fmt.Printf("[31m[!][0m nuclei init: %v\n", err)
 		return
 	}
 	defer sc.Close()
 
 	findings, errCh, err := sc.Scan(ctx, urls)
 	if err != nil {
-		fmt.Printf("[!] nuclei scan: %v\n", err)
+		fmt.Printf("[31m[!][0m nuclei scan: %v\n", err)
 		return
 	}
 
 	n := 0
 	for f := range findings {
 		if werr := p.reporter.WriteFinding(f); werr != nil {
-			fmt.Printf("[!] report: %v\n", werr)
+			fmt.Printf("[31m[!][0m report: %v\n", werr)
 		}
 		_ = p.auditor.LogInfo("finding", map[string]any{
 			"id": f.ID, "severity": string(f.Severity), "target": f.Target,
@@ -668,10 +695,10 @@ func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[stri
 	}
 	for e := range errCh {
 		if e != nil {
-			fmt.Printf("[!] nuclei: %v\n", e)
+			fmt.Printf("[31m[!][0m nuclei: %v\n", e)
 		}
 	}
-	fmt.Printf("[*] findings: %d\n", n)
+	fmt.Printf("[32m[*][0m findings: %d\n", n)
 }
 
 // resolvePOCs maps the fingerprint hits to the deduplicated set of POC files to
@@ -683,12 +710,12 @@ func (p *Pipeline) resolvePOCs(fpHits map[string][]string) []string {
 	}
 	m, err := pocmap.Load(filepath.Join(p.configDir, "pocs", "mapping.yaml"))
 	if err != nil {
-		fmt.Printf("[!] pocmap: %v; skipping precise scan\n", err)
+		fmt.Printf("[31m[!][0m pocmap: %v; skipping precise scan\n", err)
 		return nil
 	}
 	pocDir := filepath.Join(p.configDir, "pocs", "legacy")
 	resolved, stats := m.Resolve(fpHits, pocDir, !p.cfg.DisableGeneralPoc)
-	fmt.Printf("[*] poc mapping: %d product hit(s) -> %d POC file(s) across %d target(s)\n",
+	fmt.Printf("[32m[*][0m poc mapping: %d product hit(s) -> %d POC file(s) across %d target(s)\n",
 		stats.MatchedNames, stats.UniquePOCs, stats.Targets)
 	return pocmap.Union(resolved)
 }
@@ -720,6 +747,100 @@ func hostPort(t types.Target) string {
 		return fmt.Sprintf("%s:%d", t.Host, t.Port)
 	}
 	return t.Host
+}
+
+func stripPaths(urls []string) []string {
+	out := make([]string, 0, len(urls))
+	seen := make(map[string]struct{})
+	for _, u := range urls {
+		i := strings.Index(u, "://")
+		if i < 0 {
+			continue
+		}
+		hostStart := i + 3
+		if j := strings.IndexByte(u[hostStart:], '/'); j >= 0 {
+			u = u[:hostStart+j]
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		out = append(out, u)
+	}
+	return out
+}
+
+func mergeHitsToRoots(hits map[string][]string) map[string][]string {
+	rooted := make(map[string][]string)
+	for url, names := range hits {
+		roots := stripPaths([]string{url})
+		if len(roots) == 0 {
+			continue
+		}
+		root := roots[0]
+		rooted[root] = append(rooted[root], names...)
+	}
+	for k, v := range rooted {
+		rooted[k] = dedup(v)
+	}
+	return rooted
+}
+
+var httpProbePorts = map[int]struct{}{
+	80: {}, 81: {}, 88: {}, 443: {}, 300: {}, 1080: {}, 3000: {},
+	4443: {}, 4567: {}, 5000: {}, 5100: {}, 5800: {}, 5985: {}, 5986: {},
+	7001: {}, 7070: {}, 7443: {}, 7777: {}, 8000: {}, 8001: {},
+	8008: {}, 8043: {}, 8080: {}, 8081: {}, 8088: {}, 8089: {}, 8090: {},
+	8180: {}, 8443: {}, 8448: {}, 8888: {}, 9000: {}, 9001: {}, 9043: {},
+	9060: {}, 9080: {}, 9090: {}, 9200: {}, 9443: {}, 9999: {}, 10000: {},
+	18080: {},
+}
+
+func shouldHTTPProbe(port int, key string, services map[string]string) bool {
+	if svc := services[key]; svc != "" {
+		switch svc {
+		case "http", "https", "http-alt", "ssl", "unknown":
+			return true
+		case "ssh", "ftp", "smtp", "mysql", "mssql", "oracle", "redis",
+			"mongodb", "smb", "rdp", "telnet", "netbios", "rpc", "adb",
+			"memcached", "jdwp", "postgresql":
+			return false
+		}
+	}
+	_, ok := httpProbePorts[port]
+	return ok
+}
+
+func (p *Pipeline) filterByPortThreshold(results []portscan.Result) []portscan.Result {
+	if p.cfg.PortsThreshold <= 0 {
+		return results
+	}
+	counts := make(map[string]int)
+	for _, r := range results {
+		counts[r.Host]++
+	}
+	var out []portscan.Result
+	for _, r := range results {
+		if counts[r.Host] > p.cfg.PortsThreshold {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func excludeFrom(ports, exclude []int) []int {
+	exm := make(map[int]struct{}, len(exclude))
+	for _, p := range exclude {
+		exm[p] = struct{}{}
+	}
+	var out []int
+	for _, p := range ports {
+		if _, ok := exm[p]; !ok {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func dedup(in []string) []string {

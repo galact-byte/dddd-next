@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"time"
 
 	"dddd-next/internal/app"
 	"dddd-next/internal/config"
@@ -20,7 +21,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.29-dev"
+	appVersion = "0.1.30-dev"
 )
 
 func main() {
@@ -53,6 +54,15 @@ func runScan(args []string) int {
 		return 2
 	}
 
+	outDir := setupOutputDir()
+	if cfg.Output != "" {
+		cfg.Output = filepath.Join(outDir, cfg.Output)
+	}
+	cfg.HTMLOutput = filepath.Join(outDir, "report.html")
+	if cfg.AuditLog {
+		cfg.AuditLogFile = filepath.Join(outDir, cfg.AuditLogFile)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -64,12 +74,20 @@ func runScan(args []string) int {
 	defer pipeline.Close()
 
 	fmt.Printf("%s %s — scanning %d target(s)\n", appName, appVersion, len(cfg.Targets))
+	fmt.Printf("[*] output dir: %s\n", outDir)
 	if err := pipeline.Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	fmt.Printf("[*] done. results -> %s\n", cfg.Output)
+	fmt.Printf("[*] done. results -> %s\n", outDir)
 	return 0
+}
+
+func setupOutputDir() string {
+	ts := time.Now().Format("2006-01-02_150405")
+	dir := filepath.Join("output", ts)
+	os.MkdirAll(dir, 0755)
+	return dir
 }
 
 func printHelp() {
@@ -86,11 +104,53 @@ Scan flags:
   -ot <text|json> output format (default text)
   -ho <file>      HTML report file (empty disables)
   -a              enable audit log (audit.log)
+  -alf <file>     audit log filename (default audit.log)
+
   -sd             enumerate subdomains for domain targets
+  -nsb            skip active subdomain brute-force
+  -ns             skip passive subdomain enumeration (subfinder)
   -proxy <url>    HTTP/SOCKS5 proxy for outgoing requests
+
+  -st <tcp|syn>   scan type: tcp (connect, default) | syn (requires npcap/admin)
+  -sst <n>        SYN scan packet rate (default 10000)
+  -p <ports>      port spec: "80,443,8000-8100" or "all" (default: curated)
+  -np <ports>     exclude specific ports (comma-separated)
+  -pmc <n>        max open ports per IP before dropping as firewalled (default 300)
+  -ping           ICMP-ping first, only scan responding hosts
+  -skip-cdn       exclude CDN/WAF-fronted domains
+  -ac             allow scanning CDN assets (overrides -skip-cdn)
+  -no-dir         skip product-path probing (/nacos/, /druid/, ...)
+
   -full           run all nuclei templates instead of fingerprint-matched POCs
   -no-general     skip the product-independent General-Poc set (precise mode)
-  -log-level      debug | info | warn | error
+  -severity <s>   nuclei severity filter (repeatable: critical,high,medium,low,info)
+  -exclude-severity <s>  exclude nuclei severities (repeatable)
+  -tags <t>       nuclei template tags to include (repeatable)
+  -exclude-tags <t>  nuclei template tags to exclude (repeatable)
+  -poc <name>     fuzzy-match POC template by name/id substring
+
+  -no-brute       skip weak-credential brute-force (gopocs)
+  -no-poc         skip all POC/exploit checks (nuclei + shiro)
+  -ngp            skip gopocs weak-cred/crack checks only (nuclei+shiro still run)
+  -ni             disable interactsh OOB server
+  -iserver <url>  custom interactsh server URL
+  -itoken <t>     interactsh auth token
+
+  -up <user:pass> custom credential (repeatable)
+  -upf <file>     custom credential file (user:pass per line)
+
+  -tst <n>        TCP port scan threads (default 1000)
+  -pst <n>        TCP port scan timeout seconds (default 6)
+  -tc <n>         service detection threads (default 500)
+  -nto <n>        service detection timeout seconds (default 5)
+  -sbt <n>        subdomain brute-force threads (default 150)
+  -wt <n>         Web probe threads (default 200)
+  -wto <n>        Web probe timeout seconds (default 10)
+  -gpt <n>        GoPoC threads (default 50)
+
+  -pt             test proxy before use
+  -ptu <url>      proxy test URL (default https://www.baidu.com)
+  -log-level      debug | info | warn | error (default info)
 
 Subcommands:
   update          Pull the latest nuclei-templates and POC sources via git

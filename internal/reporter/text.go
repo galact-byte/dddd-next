@@ -46,7 +46,11 @@ func (r *TextReporter) WriteFingerprint(target string, fp types.Fingerprint) err
 func (r *TextReporter) WriteFinding(f types.Finding) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, err := fmt.Fprintf(r.w, "[%s] %s | %s | %s\n", upper(string(f.Severity)), f.Target, f.Name, f.Template)
+	detail := f.Template
+	if detail == "" {
+		detail = f.Description
+	}
+	_, err := fmt.Fprintf(r.w, "%s %s | %s | %s\n", severityTag(f.Severity), f.Target, f.Name, detail)
 	if err != nil {
 		return err
 	}
@@ -63,6 +67,21 @@ func (r *TextReporter) Close() error {
 		return r.closer.Close()
 	}
 	return nil
+}
+
+func severityTag(s types.Severity) string {
+	var c string
+	switch s {
+	case types.SeverityCritical, types.SeverityHigh:
+		c = "\033[31m" // red
+	case types.SeverityMedium:
+		c = "\033[33m" // yellow
+	case types.SeverityLow:
+		c = "\033[32m" // green
+	default:
+		c = "\033[37m" // white
+	}
+	return fmt.Sprintf("%s[%s]%s", c, upper(string(s)), "\033[0m")
 }
 
 func upper(s string) string {

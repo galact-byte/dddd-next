@@ -4,7 +4,7 @@
 
 `dddd-next` 是对原 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 项目的现代化重写。原项目自 2024 年后基本停更，但其依赖的 `nuclei`、`httpx`、`subfinder` 等仍在快速迭代，内置 POC 也已老化。本项目在保留 dddd 设计哲学的基础上，采用现代 Go 标准结构重构，依赖直接跟随 projectdiscovery 主线版本。
 
-> **当前状态**：**全功能复刻 + 全栈升级已达成**——recon 覆盖能力 100%（gopocs 17/17 + 被动指纹 + ICMP + CDN + 产品路径 + 自定义端口 + 子域名爆破 + OOB 盲打）、控制开关 100%（nuclei 过滤 + 阶段跳过 + 自定义凭据）。剩余差异为性能加速项（SYN/masscan）。工程质量（依赖 / 结构 / 测试 / 多项 bug 修复）已超越原版。
+> **当前状态**：**全功能复刻 + 全栈升级已达成**——recon 覆盖能力 100%（gopocs 18/18 + 被动指纹 + ICMP + CDN + 产品路径 + 自定义端口 + 子域名爆破 + OOB 盲打）、控制开关 100%（nuclei 过滤 + 阶段跳过 + 自定义凭据）。剩余差异为性能加速项（SYN/masscan）。工程质量（依赖 / 结构 / 测试 / 多项 bug 修复）已超越原版。
 
 ## 与原项目的差异（全栈升级）
 
@@ -42,7 +42,7 @@
 
 **全功能复刻 + 全栈升级已达成**：
 
-- **gopocs 协议**：原版 17 种已全覆盖（弱口令 11 + 探测型 5 + shiro 专用爆破）
+- **gopocs 协议**：原版 18 种已全覆盖（弱口令 11 + 探测型 6 + shiro 专用爆破；含 RPC Endpoint Mapper 信息泄露）
 - **recon 覆盖能力 100%**：被动指纹 / ICMP 存活 / CDN 识别 / 产品路径二次指纹 / 自定义端口 / 主动子域名爆破均已补齐；OOB 盲打（interactsh）默认启用
 - **控制开关 100%**：nuclei 过滤（`-severity`/`-tags`/`-exclude-*`）、阶段跳过（`-no-brute`/`-no-poc`）、自定义凭据（`-up`/`-upf`）
 
