@@ -36,6 +36,28 @@
 > - v0.1.31-parity: 补齐诚实复盘漏算的剩余缺口——**SYN 扫描接线**(原 `synScan` 是死代码、`-st syn` 静默降级 TCP，修复并改掉传给 naabu 的非法 `"top1000"` 端口默认值)、**vhost 域名绑定资产探测**(原版 `HostBindCheck`，对 IP 型存活根用域名 Host 重探，发现非标端口上的虚拟主机；`-nhb` 关)、**TCP-Ping 主机发现**(`-tp`)、`-oip`/`-ld` 控制开关；附带修复 `-tst`/`-pst`/`-np`/`-pmc` 此前"定义却未接线"、Windows cmd 启用 VT 让 ANSI 颜色真正显示。**诚实声明**：Hunter 低感知模式(`-lpm`)未补——它依赖 Hunter 返回响应体，而 projectdiscovery/uncover 只暴露 host/port/url/ip，需自写 Hunter 客户端，留作独立任务。23 包回归全绿
 > - v0.1.32-lpm: 补上 v0.1.31 唯一欠的那块——**Hunter 低感知模式(`-lpm`)**。原版靠 Hunter API 返回的 `banner`(目标原始 HTTP 响应)本地判指纹、对目标零发包；而 `projectdiscovery/uncover` 解码时把结果砍到只剩 ip/port/domain、丢弃 banner，故绕开它新写专用 `internal/discovery/hunter` 客户端(直连 openApi、`is_web=3` 取 banner、**0 新增依赖**)，pipeline `runLowPerception` 用 banner→指纹→精准 POC，web 进 nuclei、非 web 进 gopocs。**至此原版会影响"能发现什么"的能力全部对齐**，剩余仅 SYN/masscan 性能项。24 包回归全绿
 > - v0.1.33-resume: 清掉逐-flag 维度的小尾巴——**fscan/dddd 结果重导入**(`-tf` 接受 fscan `ip:port open` 行 + dddd-next 自身 `[FP] target | name | confidence` 行，后者 pre-seed 指纹**零探测直进 POC**) + **recon `-limit`** 资产数量旋钮(覆盖原版 `-fmc/-qmc/-hmpc` 拉多少资产的意图)。诚实保留：Hunter+Fofa 组合查询(ICP→fofa 补端口)需绕开 uncover 做 IP 二次查询，属独立一块未做。24 包回归全绿
+> - v0.1.34-ui: 终端 UX 升级（克制现代风，0 新依赖）——启动 ASCII banner（四个 d 方块，呼应原版）+ 配置摘要行（目标数/扫描模式/输出目录）+ 收尾 summary（指纹数 / 漏洞数按 critical·high·medium·low 统计）。`countingReporter` 包装 reporter 集中计数，不污染各阶段。24 包回归全绿
+
+---
+
+## v0.1.34-ui — 终端 UX 升级（banner + 配置摘要 + 收尾 summary）
+
+> 回应"原版终端排版/颜色不错"的反馈。不照搬 gologger（避免拖回日志依赖、与轻量哲学冲突），走克制现代风。
+
+### 新增文件
+#### `internal/app/ui.go` — countingReporter + printSummary
+- `countingReporter` 包装 `reporter.Reporter`，集中统计指纹/漏洞（按危险度），各阶段无需回传计数。
+- `printSummary` 扫描结束打印 summary 段。
+
+### 修改文件
+#### `cmd/dddd/main.go` — banner + 配置摘要
+- `printBanner` 启动横幅（四个 d 方块 ASCII + 版本 + tagline，青色）；`scanModeLabel` 标注 precise/full/recon-only/low-perception；摘要行替代旧的两行状态。
+#### `internal/app/pipeline.go` — 接线
+- `New` 用 countingReporter 包装；`Run` `defer printSummary()` 覆盖所有返回路径。
+
+### 测试方式
+- 冒烟 `-t 127.0.0.1 -no-poc -no-brute`：banner + 配置摘要 + summary 三段正常渲染；`go test ./...` 24 包全绿。
+- Windows cmd 颜色靠 v0.1.31 的 VT 启用生效。
 
 ---
 

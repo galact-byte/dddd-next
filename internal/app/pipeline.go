@@ -56,6 +56,8 @@ type Pipeline struct {
 	// ipDomains maps an IP to the domains known to resolve to it, feeding the
 	// vhost probe (re-request IP-based roots with each domain's Host header).
 	ipDomains map[string][]string
+
+	counts *countingReporter // tallies for the end-of-run summary
 }
 
 // New loads the fingerprint database and sets up the reporter/auditor sinks.
@@ -83,10 +85,13 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 	}
 
 	fmt.Printf("[32m[*][0m fingerprints loaded: %d rules\n", eng.Size())
-	return &Pipeline{cfg: cfg, configDir: configDir, finger: eng, reporter: rep, auditor: aud, ipDomains: make(map[string][]string)}, nil
+	counter := newCountingReporter(rep)
+	return &Pipeline{cfg: cfg, configDir: configDir, finger: eng, reporter: counter, auditor: aud, ipDomains: make(map[string][]string), counts: counter}, nil
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
+	defer p.printSummary()
+
 	probeInputs, domains, portscanSpecs, searchQueries, fingerImports := p.parseTargets()
 
 	if p.cfg.LowPerception {

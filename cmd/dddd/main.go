@@ -21,7 +21,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.33-dev"
+	appVersion = "0.1.34-dev"
 )
 
 func main() {
@@ -54,6 +54,8 @@ func runScan(args []string) int {
 		return 2
 	}
 
+	printBanner()
+
 	outDir := setupOutputDir()
 	if cfg.Output != "" {
 		cfg.Output = filepath.Join(outDir, cfg.Output)
@@ -73,8 +75,7 @@ func runScan(args []string) int {
 	}
 	defer pipeline.Close()
 
-	fmt.Printf("%s %s — scanning %d target(s)\n", appName, appVersion, len(cfg.Targets))
-	fmt.Printf("[*] output dir: %s\n", outDir)
+	fmt.Printf("\x1b[32m[*]\x1b[0m %d target(s)  ·  %s  ·  output -> %s\n", len(cfg.Targets), scanModeLabel(cfg), outDir)
 	if err := pipeline.Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -88,6 +89,31 @@ func setupOutputDir() string {
 	dir := filepath.Join("output", ts)
 	os.MkdirAll(dir, 0755)
 	return dir
+}
+
+func printBanner() {
+	c := "\x1b[36m"
+	b := "\x1b[1m"
+	d := "\x1b[2m"
+	x := "\x1b[0m"
+	fmt.Println()
+	fmt.Printf("%s ┌─┐ ┌─┐ ┌─┐ ┌─┐%s   %sdddd-next%s\n", c, x, b, x)
+	fmt.Printf("%s │ │ │ │ │ │ │ │%s   %sautomated asset recon + vuln scan%s\n", c, x, d, x)
+	fmt.Printf("%s └─┘ └─┘ └─┘ └─┘%s   %s%s%s\n", c, x, d, appVersion, x)
+	fmt.Println()
+}
+
+func scanModeLabel(cfg config.Config) string {
+	switch {
+	case cfg.LowPerception:
+		return "low-perception"
+	case cfg.FullScan:
+		return "full-nuclei"
+	case cfg.NoPoc:
+		return "recon-only"
+	default:
+		return "precise-poc"
+	}
 }
 
 func printHelp() {
