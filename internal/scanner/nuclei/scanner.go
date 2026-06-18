@@ -22,6 +22,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"dddd-next/internal/types"
@@ -109,6 +111,7 @@ func New(ctx context.Context, opts Options) (*Scanner, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ensureIgnoreFile()
 	// nuclei resolves templates from a process-global, not from our options;
 	// pin it to ours so it won't fall back to a stray install and phone home.
 	if opts.TemplatesDir != "" {
@@ -178,6 +181,23 @@ func (s *Scanner) Close() error {
 	s.engine.Close()
 	s.engine = nil
 	return nil
+}
+
+// ensureIgnoreFile pre-creates ~/.config/nuclei/.nuclei-ignore so a fresh
+// install doesn't log "Could not read nuclei-ignore file" on every run.
+func ensureIgnoreFile() {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	nucleiDir := filepath.Join(dir, "nuclei")
+	if err := os.MkdirAll(nucleiDir, 0o755); err != nil {
+		return
+	}
+	ignore := filepath.Join(nucleiDir, ".nuclei-ignore")
+	if _, err := os.Stat(ignore); os.IsNotExist(err) {
+		_ = os.WriteFile(ignore, []byte("# managed by dddd-next\n"), 0o644)
+	}
 }
 
 // buildSDKOptions translates dddd-next Options into the SDK's functional

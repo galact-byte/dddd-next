@@ -246,6 +246,7 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 
 	open = p.filterByPortThreshold(open)
 	for _, r := range open {
+		fmt.Printf("\x1b[32m  [+]\x1b[0m %s:%d\n", r.Host, r.Port)
 		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
 	fmt.Printf("\x1b[32m[*]\x1b[0m open ports: %d\n", len(open))
@@ -387,6 +388,7 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result, 
 
 	n := 0
 	for f := range eng.Run(ctx, endpoints) {
+		fmt.Println(findingLine(f))
 		if werr := p.reporter.WriteFinding(f); werr != nil {
 			fmt.Printf("[31m[!][0m report: %v\n", werr)
 		}
@@ -773,6 +775,7 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 			if err != nil || f == nil {
 				return
 			}
+			fmt.Println(findingLine(*f))
 			if werr := p.reporter.WriteFinding(*f); werr != nil {
 				fmt.Printf("[31m[!][0m report: %v\n", werr)
 			}
@@ -840,6 +843,7 @@ func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[stri
 
 	n := 0
 	for f := range findings {
+		fmt.Println(findingLine(f))
 		if werr := p.reporter.WriteFinding(f); werr != nil {
 			fmt.Printf("[31m[!][0m report: %v\n", werr)
 		}
