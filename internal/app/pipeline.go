@@ -246,7 +246,6 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 
 	open = p.filterByPortThreshold(open)
 	for _, r := range open {
-		fmt.Printf("\x1b[32m  [+]\x1b[0m %s:%d\n", r.Host, r.Port)
 		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
 	fmt.Printf("\x1b[32m[*]\x1b[0m open ports: %d\n", len(open))
