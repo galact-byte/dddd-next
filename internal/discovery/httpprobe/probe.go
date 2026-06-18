@@ -96,15 +96,19 @@ func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 	out := make(chan Response, 128)
 
 	runnerOpts := runner.Options{
-		InputTargetHost:           goflags.StringSlice(p.opts.Targets),
-		Methods:                   p.opts.Methods,
-		Threads:                   p.opts.Threads,
-		Timeout:                   p.opts.TimeoutSeconds,
-		FollowRedirects:           p.opts.FollowRedirects,
-		TechDetect:                p.opts.TechDetect,
-		HTTPProxy:                 p.opts.Proxy,
-		Silent:                    true,
-		NoColor:                   true,
+		InputTargetHost: goflags.StringSlice(p.opts.Targets),
+		Methods:         p.opts.Methods,
+		Threads:         p.opts.Threads,
+		Timeout:         p.opts.TimeoutSeconds,
+		FollowRedirects: p.opts.FollowRedirects,
+		TechDetect:      p.opts.TechDetect,
+		HTTPProxy:       p.opts.Proxy,
+		Silent:          true,
+		NoColor:         true,
+		// httpx writes every probed URL to stdout by default; we surface results
+		// through OnResult instead, so silence its own output (it floods the
+		// product-path stage with hundreds of lines).
+		DisableStdout:             true,
 		MaxResponseBodySizeToRead: p.opts.MaxBodyBytes,
 		MaxResponseBodySizeToSave: p.opts.MaxBodyBytes,
 		// httpx fills Result.ResponseBody / RawHeaders only when this is set

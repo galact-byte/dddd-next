@@ -284,6 +284,7 @@ func (p *Pipeline) tcpScan(ctx context.Context, hosts []string) []portscan.Resul
 	sc := portscan.New(opts)
 	var open []portscan.Result
 	for r := range sc.Scan(ctx, hosts) {
+		fmt.Printf("\x1b[32m  [+]\x1b[0m %s:%d\n", r.Host, r.Port)
 		open = append(open, r)
 	}
 	return open
@@ -344,6 +345,7 @@ func (p *Pipeline) synScan(ctx context.Context, hosts []string) ([]portscan.Resu
 	}
 	open := make([]portscan.Result, 0, len(results))
 	for _, r := range results {
+		fmt.Printf("\x1b[36m  [+]\x1b[0m %s:%d\n", r.Host, r.Port)
 		open = append(open, portscan.Result{Host: r.Host, Port: r.Port})
 	}
 	return open, true
@@ -672,6 +674,11 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 			hits[resp.URL] = append(hits[resp.URL], tech)
 			passive++
 		}
+		if names := dedup(hits[resp.URL]); len(names) > 0 {
+			fmt.Printf("  %s [%s]\n", resp.URL, strings.Join(names, ","))
+		} else {
+			fmt.Printf("  %s\n", resp.URL)
+		}
 	}
 	fmt.Printf("[32m[*][0m live web: %d, fingerprint hits: %d active + %d passive(tech)\n", len(live), active, passive)
 	return live, hits
@@ -738,6 +745,7 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 		}
 		if matched {
 			urls = append(urls, resp.URL)
+			fmt.Printf("  %s [%s]\n", resp.URL, strings.Join(dedup(hits[resp.URL]), ","))
 		}
 	}
 	fmt.Printf("[32m[*][0m product-path probe: %d path(s) matched a fingerprint\n", len(urls))
