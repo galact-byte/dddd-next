@@ -38,6 +38,17 @@
 > - v0.1.33-resume: 清掉逐-flag 维度的小尾巴——**fscan/dddd 结果重导入**(`-tf` 接受 fscan `ip:port open` 行 + dddd-next 自身 `[FP] target | name | confidence` 行，后者 pre-seed 指纹**零探测直进 POC**) + **recon `-limit`** 资产数量旋钮(覆盖原版 `-fmc/-qmc/-hmpc` 拉多少资产的意图)。诚实保留：Hunter+Fofa 组合查询(ICP→fofa 补端口)需绕开 uncover 做 IP 二次查询，属独立一块未做。24 包回归全绿
 > - v0.1.34-ui: 终端 UX 升级（克制现代风，0 新依赖）——启动 ASCII banner（四个 d 方块，呼应原版）+ 配置摘要行（目标数/扫描模式/输出目录）+ 收尾 summary（指纹数 / 漏洞数按 critical·high·medium·low 统计）。`countingReporter` 包装 reporter 集中计数，不污染各阶段。24 包回归全绿
 > - v0.1.35-fix: **真机实测(Kali→CentOS)揪出并修复 3 个 bug**——①裸 IP 目标(`-t <ip>`)此前直接 HTTP 探测、**完全跳过端口扫描**→漏掉所有非 80/443 服务(redis/ssh/mysql/nacos:8848/shiro:8080)，改走端口扫描(对齐原版)；②默认端口集仅 69 个、缺 8848 等→移植原版 TOP1000；③产品路径二次指纹把首页通用指纹(Apache/PHP)在每条路径重复匹配→26 条全假阳性，改为只认相对首页新出现的产品。修复后应能复现原版结果。24 包全绿
+> - v0.1.36-output: 修 nuclei `Could not read nuclei-ignore file` 报错（预创建 `.nuclei-ignore`）+ **过程逐行展示**——端口扫描逐个打印 `[+] host:port`、nuclei/gopocs/shiro 命中逐条打印 `[SEVERITY] id target`（配色），对齐原版终端观感。24 包全绿
+
+---
+
+## v0.1.36-output — 修 nuclei-ignore 报错 + 过程逐行展示（对齐原版观感）
+
+> 真机实测反馈：nuclei 每次报 `Could not read nuclei-ignore file`；且端口/漏洞结果不像原版那样逐行显示，过程不直观。
+
+- **nuclei-ignore 报错**：`nuclei.New` 启动前 `ensureIgnoreFile` 预创建 `~/.config/nuclei/.nuclei-ignore`（不存在才建），消除每次的 ERR 噪音。
+- **逐行展示**：端口扫描每发现一个开放端口打印 `[+] host:port`；nuclei / gopocs 弱口令 / shiro 命中各自逐条打印 `[SEVERITY] id  target`（severity 配色），对齐原版的过程观感。新增 `findingLine`/`sevColor`。
+- `go build` / `go vet` / `go test ./...` 24 包全绿。
 
 ---
 
