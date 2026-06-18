@@ -21,7 +21,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.36-dev"
+	appVersion = "0.1.37-dev"
 )
 
 func main() {
@@ -97,9 +97,10 @@ func printBanner() {
 	d := "\x1b[2m"
 	x := "\x1b[0m"
 	fmt.Println()
-	fmt.Printf("%s ┌─┐ ┌─┐ ┌─┐ ┌─┐%s   %sdddd-next%s\n", c, x, b, x)
-	fmt.Printf("%s │ │ │ │ │ │ │ │%s   %sautomated asset recon + vuln scan%s\n", c, x, d, x)
-	fmt.Printf("%s └─┘ └─┘ └─┘ └─┘%s   %s%s%s\n", c, x, d, appVersion, x)
+	fmt.Printf("%s     _       _       _       _%s\n", c, x)
+	fmt.Printf("%s  __| |   __| |   __| |   __| |%s   %sdddd-next%s\n", c, x, b, x)
+	fmt.Printf("%s / _` |  / _` |  / _` |  / _` |%s   %sautomated asset recon + vuln scan%s\n", c, x, d, x)
+	fmt.Printf("%s \\__,_|  \\__,_|  \\__,_|  \\__,_|%s   %s%s%s\n", c, x, d, appVersion, x)
 	fmt.Println()
 }
 

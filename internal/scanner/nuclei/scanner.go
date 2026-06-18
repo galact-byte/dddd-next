@@ -195,9 +195,15 @@ func ensureIgnoreFile() {
 		return
 	}
 	ignore := filepath.Join(nucleiDir, ".nuclei-ignore")
-	if _, err := os.Stat(ignore); os.IsNotExist(err) {
-		_ = os.WriteFile(ignore, []byte("# managed by dddd-next\n"), 0o644)
+	// nuclei parses this as YAML with tags/files lists; a missing or comment-only
+	// file makes it log "could not parse ... EOF". Rewrite unless it already has a
+	// valid key (so we also fix a bad file an older build may have left behind).
+	if data, err := os.ReadFile(ignore); err == nil {
+		if strings.Contains(string(data), "tags:") || strings.Contains(string(data), "files:") {
+			return
+		}
 	}
+	_ = os.WriteFile(ignore, []byte("tags: []\nfiles: []\n"), 0o644)
 }
 
 // buildSDKOptions translates dddd-next Options into the SDK's functional

@@ -77,8 +77,8 @@ func (p *Pipeline) printSummary() {
 		fmt.Println("  findings      0")
 		return
 	}
-	fmt.Printf("  findings      %d  %s(critical %d · high %d · medium %d · low %d)%s\n",
+	fmt.Printf("  findings      %d  %s(critical %d · high %d · medium %d · low %d · info %d)%s\n",
 		c.findings, dim,
 		c.bySev[types.SeverityCritical], c.bySev[types.SeverityHigh],
-		c.bySev[types.SeverityMedium], c.bySev[types.SeverityLow], reset)
+		c.bySev[types.SeverityMedium], c.bySev[types.SeverityLow], c.bySev[types.SeverityInfo], reset)
 }
