@@ -38,8 +38,13 @@ func TestParseTargetsClassification(t *testing.T) {
 		"sub.example.com",    // domain -> enum/resolve
 		"192.168.0.0/24",     // CIDR -> port scan
 		`app="seeyon"`,       // search query -> recon
+		"[FP] http://1.2.3.4:9090 | Nacos | confidence=90", // resume -> POC直接
 	}}}
-	probeInputs, domains, portscanSpecs, searchQueries := p.parseTargets()
+	probeInputs, domains, portscanSpecs, searchQueries, fingerImports := p.parseTargets()
+
+	if len(fingerImports) != 1 || len(fingerImports["http://1.2.3.4:9090"]) != 1 {
+		t.Errorf("fingerImports = %v, want 1 import with 1 finger", fingerImports)
+	}
 
 	if len(domains) != 1 || domains[0] != "sub.example.com" {
 		t.Errorf("domains = %v, want [sub.example.com]", domains)

@@ -35,6 +35,33 @@
 > - v0.1.30-rpc+cli: **补齐原版第18个gopocs(RPC-GetHostInfo)** + CLI开关补全6项(-alf/-ns/-ngp/-np/-ni/-poc)。22 包回归全绿
 > - v0.1.31-parity: 补齐诚实复盘漏算的剩余缺口——**SYN 扫描接线**(原 `synScan` 是死代码、`-st syn` 静默降级 TCP，修复并改掉传给 naabu 的非法 `"top1000"` 端口默认值)、**vhost 域名绑定资产探测**(原版 `HostBindCheck`，对 IP 型存活根用域名 Host 重探，发现非标端口上的虚拟主机；`-nhb` 关)、**TCP-Ping 主机发现**(`-tp`)、`-oip`/`-ld` 控制开关；附带修复 `-tst`/`-pst`/`-np`/`-pmc` 此前"定义却未接线"、Windows cmd 启用 VT 让 ANSI 颜色真正显示。**诚实声明**：Hunter 低感知模式(`-lpm`)未补——它依赖 Hunter 返回响应体，而 projectdiscovery/uncover 只暴露 host/port/url/ip，需自写 Hunter 客户端，留作独立任务。23 包回归全绿
 > - v0.1.32-lpm: 补上 v0.1.31 唯一欠的那块——**Hunter 低感知模式(`-lpm`)**。原版靠 Hunter API 返回的 `banner`(目标原始 HTTP 响应)本地判指纹、对目标零发包；而 `projectdiscovery/uncover` 解码时把结果砍到只剩 ip/port/domain、丢弃 banner，故绕开它新写专用 `internal/discovery/hunter` 客户端(直连 openApi、`is_web=3` 取 banner、**0 新增依赖**)，pipeline `runLowPerception` 用 banner→指纹→精准 POC，web 进 nuclei、非 web 进 gopocs。**至此原版会影响"能发现什么"的能力全部对齐**，剩余仅 SYN/masscan 性能项。24 包回归全绿
+> - v0.1.33-resume: 清掉逐-flag 维度的小尾巴——**fscan/dddd 结果重导入**(`-tf` 接受 fscan `ip:port open` 行 + dddd-next 自身 `[FP] target | name | confidence` 行，后者 pre-seed 指纹**零探测直进 POC**) + **recon `-limit`** 资产数量旋钮(覆盖原版 `-fmc/-qmc/-hmpc` 拉多少资产的意图)。诚实保留：Hunter+Fofa 组合查询(ICP→fofa 补端口)需绕开 uncover 做 IP 二次查询，属独立一块未做。24 包回归全绿
+
+---
+
+## v0.1.33-resume — 结果重导入 + recon 数量旋钮（清掉逐-flag 小尾巴）
+
+> 上一轮诚实结论里"逐 flag 严格维度还差的几个不影响发现能力的小尾巴"，本轮清掉两条最实用的。
+
+### 修改文件
+
+#### `internal/classifier/classifier.go` + `internal/types/types.go` — 结果重导入
+- `normalize` 剥掉 fscan 的 `ip:port open` 尾巴 → 当 ip:port 目标。
+- `[FP] <target> | <name> | confidence=<n>`(dddd-next 自身报告格式) → 新 `InputFingerImport` 类型 + `Target.Fingers`，round-trip 自己的输出（不照搬原版 `[Finger]` 格式）。
+
+#### `internal/app/pipeline.go` — 接线
+- `parseTargets` 收集 `fingerImports`；`Run` 把导入的指纹**不经探测**直接喂 POC 选择（指纹已是上轮已知结果），web 进 nuclei/shiro。纯导入（无其它目标）也能独立跑。
+- `recon` 用 `-limit` 取代硬编码 0（0 = uncover 默认 100）。
+
+#### `internal/config/config.go` + `cmd/dddd/main.go` — `-limit` flag + help + 版本 0.1.33
+
+### 测试方式
+- classifier 单测：fscan `open`、`[FP]` 行的分类与解析；pipeline 单测验证 `fingerImports` 收集。
+- `go build` / `go vet` 干净；`go test ./...` **24 包全绿**。
+
+### 仍诚实保留
+- **Hunter+Fofa 组合查询**(ICP 查备案→fofa 补端口)未做：dddd-next 已并行查三引擎，但 ICP 语法仅 hunter 懂，要忠实复刻"hunter 出 IP→fofa 二次查端口"得绕开 uncover 做 IP 二次查询，属独立一块，按需再补。
+- 原版 `-hps/-hmpc/-fmc/-qmc` 四个分页旋钮统一为 `-limit`（dddd-next 走 projectdiscovery/uncover 单一 limit、非按引擎），属架构取舍。
 
 ---
 

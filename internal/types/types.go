@@ -20,6 +20,7 @@ const (
 	InputDomainPort
 	InputURL
 	InputSearchQuery
+	InputFingerImport // a re-imported "[FP] target | name | ..." line (fscan/dddd resume)
 )
 
 // String returns the canonical name for use in logs and reports.
@@ -41,6 +42,8 @@ func (t InputType) String() string {
 		return "url"
 	case InputSearchQuery:
 		return "search-query"
+	case InputFingerImport:
+		return "finger-import"
 	default:
 		return "unknown"
 	}
@@ -48,12 +51,13 @@ func (t InputType) String() string {
 
 // Target is the smallest unit scanned by any engine.
 type Target struct {
-	Raw    string
-	Type   InputType
-	Host   string
-	Port   int
-	Scheme string
-	URL    string
+	Raw     string
+	Type    InputType
+	Host    string
+	Port    int
+	Scheme  string
+	URL     string
+	Fingers []string // pre-known fingerprints when Type is InputFingerImport
 }
 
 // Asset is what a recon source (Hunter / Fofa / Quake) hands back.
