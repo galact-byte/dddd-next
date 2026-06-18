@@ -21,7 +21,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.32-dev"
+	appVersion = "0.1.33-dev"
 )
 
 func main() {
@@ -99,7 +99,7 @@ Usage:
 
 Scan flags:
   -t <target>     target (repeatable): IP / CIDR / Range / IP:Port / Domain / URL / search query
-  -tf <file>      targets file, one per line
+  -tf <file>      targets file, one per line (accepts fscan "ip:port open" and dddd "[FP] ..." lines)
   -o <file>       result output file (default result.txt)
   -ot <text|json> output format (default text)
   -ho <file>      HTML report file (empty disables)
@@ -125,6 +125,7 @@ Scan flags:
   -oip            pull recon assets as IP:Port instead of Domain:Port
   -ld             keep recon assets that resolve to LAN/private IPs
   -lpm            Hunter low-perception: fingerprint from Hunter's banner, no probe
+  -limit <n>      max assets per recon query (fofa/hunter/quake; 0 = 100)
 
   -full           run all nuclei templates instead of fingerprint-matched POCs
   -no-general     skip the product-independent General-Poc set (precise mode)

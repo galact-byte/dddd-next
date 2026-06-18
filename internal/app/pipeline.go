@@ -87,7 +87,7 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
-	probeInputs, domains, portscanSpecs, searchQueries := p.parseTargets()
+	probeInputs, domains, portscanSpecs, searchQueries, fingerImports := p.parseTargets()
 
 	if p.cfg.LowPerception {
 		return p.runLowPerception(ctx, searchQueries)
@@ -120,31 +120,45 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 
 	probeInputs = dedup(probeInputs)
-	if len(probeInputs) == 0 {
+	if len(probeInputs) == 0 && len(fingerImports) == 0 {
 		fmt.Println("[31m[!][0m no probeable targets after discovery")
 		return nil
 	}
 
-	liveURLs, fpHits := p.probeAndFingerprint(ctx, probeInputs)
-	if len(liveURLs) > 0 && !p.cfg.SkipDir {
-		dirURLs, dirHits := p.dirProbe(ctx, stripPaths(liveURLs))
-		liveURLs = dedup(append(liveURLs, dirURLs...))
-		for u, names := range dirHits {
-			fpHits[u] = append(fpHits[u], names...)
+	var liveURLs []string
+	fpHits := make(map[string][]string)
+	if len(probeInputs) > 0 {
+		liveURLs, fpHits = p.probeAndFingerprint(ctx, probeInputs)
+		if len(liveURLs) > 0 && !p.cfg.SkipDir {
+			dirURLs, dirHits := p.dirProbe(ctx, stripPaths(liveURLs))
+			liveURLs = dedup(append(liveURLs, dirURLs...))
+			for u, names := range dirHits {
+				fpHits[u] = append(fpHits[u], names...)
+			}
+		}
+		if len(liveURLs) > 0 && !p.cfg.NoHostBind {
+			vhostURLs, vhostHits := p.vhostProbe(ctx, liveURLs)
+			liveURLs = dedup(append(liveURLs, vhostURLs...))
+			for u, names := range vhostHits {
+				fpHits[u] = append(fpHits[u], names...)
+			}
 		}
 	}
-	if len(liveURLs) > 0 && !p.cfg.NoHostBind {
-		vhostURLs, vhostHits := p.vhostProbe(ctx, liveURLs)
-		liveURLs = dedup(append(liveURLs, vhostURLs...))
-		for u, names := range vhostHits {
-			fpHits[u] = append(fpHits[u], names...)
+
+	// Re-imported fingerprints (fscan/dddd resume): feed POC selection directly,
+	// no probing — the fingerprint was already known from the prior run.
+	for target, names := range fingerImports {
+		for _, n := range names {
+			_ = p.reporter.WriteFingerprint(target, types.Fingerprint{Name: n, Target: target, Source: "import"})
 		}
+		fpHits[target] = append(fpHits[target], names...)
+		liveURLs = append(liveURLs, target)
 	}
-	if len(liveURLs) > 0 {
-		if !p.cfg.NoPoc {
-			p.runNuclei(ctx, liveURLs, fpHits)
-			p.shiroScan(ctx, liveURLs)
-		}
+	liveURLs = dedup(liveURLs)
+
+	if len(liveURLs) > 0 && !p.cfg.NoPoc {
+		p.runNuclei(ctx, liveURLs, fpHits)
+		p.shiroScan(ctx, liveURLs)
 	}
 	return nil
 }
@@ -167,7 +181,8 @@ func (p *Pipeline) Close() error {
 // parseTargets classifies each -t value into a directly-probeable input, a bare
 // domain that needs enumeration/resolution first, a CIDR/range that needs a
 // port scan, or a search query that needs the recon engines.
-func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQueries []string) {
+func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQueries []string, fingerImports map[string][]string) {
+	fingerImports = make(map[string][]string)
 	for _, raw := range p.cfg.Targets {
 		t, err := classifier.Parse(raw)
 		if err != nil {
@@ -185,11 +200,15 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 			portscanSpecs = append(portscanSpecs, t.Raw)
 		case types.InputSearchQuery:
 			searchQueries = append(searchQueries, t.Raw)
+		case types.InputFingerImport:
+			if t.URL != "" {
+				fingerImports[t.URL] = append(fingerImports[t.URL], t.Fingers...)
+			}
 		default:
 			fmt.Printf("[31m[!][0m %q: unrecognized input, skipped\n", raw)
 		}
 	}
-	return probeInputs, domains, portscanSpecs, searchQueries
+	return probeInputs, domains, portscanSpecs, searchQueries, fingerImports
 }
 
 // scanPorts expands CIDR/IP-range specs into hosts, optionally pre-filters by
@@ -415,7 +434,7 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 	seen := make(map[string]struct{})
 	var results []portscan.Result
 	for _, q := range queries {
-		assets, err := src.Query(ctx, q, 0)
+		assets, err := src.Query(ctx, q, p.cfg.ReconLimit)
 		if err != nil {
 			fmt.Printf("[31m[!][0m recon %q: %v\n", q, err)
 			continue

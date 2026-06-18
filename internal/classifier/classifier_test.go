@@ -95,3 +95,38 @@ func TestParseUnknown(t *testing.T) {
 		t.Error("expected error for unrecognised input")
 	}
 }
+
+func TestClassifyResumeFormats(t *testing.T) {
+	if got := Classify("192.168.1.1:80 open"); got != types.InputIPPort {
+		t.Errorf("fscan open: got %s, want ip:port", got)
+	}
+	if got := Classify("[FP] http://1.2.3.4:8080 | Nacos | confidence=90"); got != types.InputFingerImport {
+		t.Errorf("[FP] line: got %s, want finger-import", got)
+	}
+}
+
+func TestParseFscanOpen(t *testing.T) {
+	tgt, err := Parse("192.168.1.1:445 open")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if tgt.Type != types.InputIPPort || tgt.Host != "192.168.1.1" || tgt.Port != 445 {
+		t.Errorf("got %+v", tgt)
+	}
+}
+
+func TestParseFingerImport(t *testing.T) {
+	tgt, err := Parse("[FP] http://1.2.3.4:8080 | Nacos | confidence=90")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if tgt.Type != types.InputFingerImport {
+		t.Fatalf("Type = %s", tgt.Type)
+	}
+	if tgt.URL != "http://1.2.3.4:8080" {
+		t.Errorf("URL = %q", tgt.URL)
+	}
+	if len(tgt.Fingers) != 1 || tgt.Fingers[0] != "Nacos" {
+		t.Errorf("Fingers = %v", tgt.Fingers)
+	}
+}
