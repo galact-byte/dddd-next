@@ -135,7 +135,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	if len(probeInputs) > 0 {
 		liveURLs, fpHits = p.probeAndFingerprint(ctx, probeInputs)
 		if len(liveURLs) > 0 && !p.cfg.SkipDir {
-			dirURLs, dirHits := p.dirProbe(ctx, stripPaths(liveURLs))
+			dirURLs, dirHits := p.dirProbe(ctx, stripPaths(liveURLs), fpHits)
 			liveURLs = dedup(append(liveURLs, dirURLs...))
 			for u, names := range dirHits {
 				fpHits[u] = append(fpHits[u], names...)
@@ -197,11 +197,11 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 		switch t.Type {
 		case types.InputURL:
 			probeInputs = append(probeInputs, t.URL)
-		case types.InputIP, types.InputIPPort, types.InputDomainPort:
+		case types.InputIPPort, types.InputDomainPort:
 			probeInputs = append(probeInputs, hostPort(t))
 		case types.InputDomain:
 			domains = append(domains, t.Host)
-		case types.InputCIDR, types.InputIPRange:
+		case types.InputIP, types.InputCIDR, types.InputIPRange:
 			portscanSpecs = append(portscanSpecs, t.Raw)
 		case types.InputSearchQuery:
 			searchQueries = append(searchQueries, t.Raw)
@@ -678,7 +678,20 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 // dirProbe requests well-known product paths (/nacos/, /druid/, ...) on each
 // live root and fingerprints the responses, catching products on a sub-path the
 // homepage probe missed. Returns matched path URLs and their hits for nuclei.
-func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, map[string][]string) {
+func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[string][]string) ([]string, map[string][]string) {
+	// A product path counts only if it reveals a NEW product; the root's own
+	// generic stack (Apache/PHP/...) re-matching every path is a false positive.
+	knownByRoot := make(map[string]map[string]struct{})
+	for u, names := range known {
+		root := rootURL(u)
+		if knownByRoot[root] == nil {
+			knownByRoot[root] = make(map[string]struct{})
+		}
+		for _, n := range names {
+			knownByRoot[root][n] = struct{}{}
+		}
+	}
+
 	db, err := dirscan.Load(filepath.Join(p.configDir, "dir.yaml"))
 	if err != nil {
 		fmt.Printf("[31m[!][0m dirscan: %v; skipping product-path probe\n", err)
@@ -709,7 +722,11 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string) ([]string, m
 	hits := make(map[string][]string)
 	for resp := range ch {
 		var matched bool
+		root := rootURL(resp.URL)
 		for _, fp := range p.finger.Match(httpprobe.ToFingerprintContext(resp)) {
+			if _, seen := knownByRoot[root][fp.Name]; seen {
+				continue
+			}
 			fp.Target = resp.URL
 			if werr := p.reporter.WriteFingerprint(resp.URL, fp); werr != nil {
 				fmt.Printf("[31m[!][0m report: %v\n", werr)
@@ -1105,6 +1122,14 @@ func isPrivateIP(s string) bool {
 		return false
 	}
 	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+}
+
+func rootURL(raw string) string {
+	roots := stripPaths([]string{raw})
+	if len(roots) == 0 {
+		return raw
+	}
+	return roots[0]
 }
 
 // runLowPerception pulls assets from Hunter and fingerprints each web asset from
