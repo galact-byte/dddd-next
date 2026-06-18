@@ -37,6 +37,30 @@
 > - v0.1.32-lpm: 补上 v0.1.31 唯一欠的那块——**Hunter 低感知模式(`-lpm`)**。原版靠 Hunter API 返回的 `banner`(目标原始 HTTP 响应)本地判指纹、对目标零发包；而 `projectdiscovery/uncover` 解码时把结果砍到只剩 ip/port/domain、丢弃 banner，故绕开它新写专用 `internal/discovery/hunter` 客户端(直连 openApi、`is_web=3` 取 banner、**0 新增依赖**)，pipeline `runLowPerception` 用 banner→指纹→精准 POC，web 进 nuclei、非 web 进 gopocs。**至此原版会影响"能发现什么"的能力全部对齐**，剩余仅 SYN/masscan 性能项。24 包回归全绿
 > - v0.1.33-resume: 清掉逐-flag 维度的小尾巴——**fscan/dddd 结果重导入**(`-tf` 接受 fscan `ip:port open` 行 + dddd-next 自身 `[FP] target | name | confidence` 行，后者 pre-seed 指纹**零探测直进 POC**) + **recon `-limit`** 资产数量旋钮(覆盖原版 `-fmc/-qmc/-hmpc` 拉多少资产的意图)。诚实保留：Hunter+Fofa 组合查询(ICP→fofa 补端口)需绕开 uncover 做 IP 二次查询，属独立一块未做。24 包回归全绿
 > - v0.1.34-ui: 终端 UX 升级（克制现代风，0 新依赖）——启动 ASCII banner（四个 d 方块，呼应原版）+ 配置摘要行（目标数/扫描模式/输出目录）+ 收尾 summary（指纹数 / 漏洞数按 critical·high·medium·low 统计）。`countingReporter` 包装 reporter 集中计数，不污染各阶段。24 包回归全绿
+> - v0.1.35-fix: **真机实测(Kali→CentOS)揪出并修复 3 个 bug**——①裸 IP 目标(`-t <ip>`)此前直接 HTTP 探测、**完全跳过端口扫描**→漏掉所有非 80/443 服务(redis/ssh/mysql/nacos:8848/shiro:8080)，改走端口扫描(对齐原版)；②默认端口集仅 69 个、缺 8848 等→移植原版 TOP1000；③产品路径二次指纹把首页通用指纹(Apache/PHP)在每条路径重复匹配→26 条全假阳性，改为只认相对首页新出现的产品。修复后应能复现原版结果。24 包全绿
+
+---
+
+## v0.1.35-fix — 真机实测揪出的 3 个 bug（裸 IP 不扫端口 / 默认端口太薄 / 路径指纹误报）
+
+> Kali→CentOS 真机实测对照原版 v2.0.1：dddd-next 0 findings，而原版爆出 redis 未授权 / ssh root:123456 / shiro 密钥 / nacos CVE-2021-29441。逐项定位到 3 个 bug。
+
+### bug #1（致命）裸 IP 目标跳过端口扫描
+- `parseTargets` 把 `InputIP` 和 `InputIPPort` 一起塞进 probeInputs → 裸 IP 只 HTTP 探测 80/443、**从不端口扫描** → 漏掉 22/3306/6379/8080/8848 等全部真服务。
+- 修复：`InputIP` 改与 CIDR/Range 同路进 `portscanSpecs`，走完整端口扫描→服务识别→gopocs（对齐原版"单 IP 即全端口扫描"）。
+
+### bug #2（高）默认端口集太薄
+- 旧默认仅 69 个端口，缺 8848(nacos) 等 → 即便修了 #1 仍漏。
+- 修复：`portscan.DefaultPortsSpec` 移植原版 TOP1000（约 1000 端口），`DefaultPorts` 解析自它。
+
+### bug #3（中）产品路径二次指纹误报
+- 旧逻辑对每条路径跑指纹引擎、任意命中即记 → CentOS 默认页让 Apache/PHP 等通用指纹在 26 条路径上全"命中"→27 个假产品→9 个无效 POC→0 结果。
+- 修复：`dirProbe` 接收首页已知指纹，路径只记录**新出现**的产品（过滤首页已有的通用栈）。
+
+### 测试方式
+- 更新 `pipeline_test`（IP 现进 portscan）、新增 `portscan` 默认端口覆盖测试（断言含 8848）。
+- `go build` / `go test ./...` **24 包全绿**。
+- **真机复测待 Kali→CentOS 验证**（应复现原版的 redis/ssh/shiro/nacos 结果）。
 
 ---
 

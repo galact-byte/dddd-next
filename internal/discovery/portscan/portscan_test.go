@@ -112,3 +112,22 @@ func TestScanReportsOnlyOpenPorts(t *testing.T) {
 		t.Fatalf("want only open port %d, got %v", openPort, got)
 	}
 }
+
+func TestDefaultPortsCoverage(t *testing.T) {
+	if len(DefaultPorts) < 900 {
+		t.Fatalf("DefaultPorts len = %d, want ~1000 (TOP1000)", len(DefaultPorts))
+	}
+	has := func(p int) bool {
+		for _, x := range DefaultPorts {
+			if x == p {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range []int{22, 80, 443, 3306, 6379, 8080, 8848} {
+		if !has(p) {
+			t.Errorf("DefaultPorts missing %d", p)
+		}
+	}
+}
