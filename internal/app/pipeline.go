@@ -633,9 +633,10 @@ func (p *Pipeline) resolveDomains(ctx context.Context, domains []string) []strin
 func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]string, map[string][]string) {
 	fmt.Printf("[32m[*][0m HTTP probing %d target(s)...\n", len(inputs))
 	probe := httpprobe.New(httpprobe.Options{
-		Targets:    inputs,
-		TechDetect: true,
-		Proxy:      p.cfg.ProxyURL,
+		Targets:         inputs,
+		TechDetect:      true,
+		FollowRedirects: true, // product pages often live behind a 302 (login/console)
+		Proxy:           p.cfg.ProxyURL,
 	})
 	ch, err := probe.Run(ctx)
 	if err != nil {
@@ -675,7 +676,7 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 			passive++
 		}
 		if names := dedup(hits[resp.URL]); len(names) > 0 {
-			fmt.Printf("  %s [%s]\n", resp.URL, strings.Join(names, ","))
+			fmt.Printf("  %s \x1b[36m[%s]\x1b[0m\n", resp.URL, strings.Join(names, ","))
 		} else {
 			fmt.Printf("  %s\n", resp.URL)
 		}
@@ -713,10 +714,11 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 	fmt.Printf("[32m[*][0m product-path probe: %d path(s) across %d root(s)...\n", len(paths), len(baseURLs))
 
 	probe := httpprobe.New(httpprobe.Options{
-		Targets:      baseURLs,
-		RequestPaths: paths,
-		TechDetect:   true,
-		Proxy:        p.cfg.ProxyURL,
+		Targets:         baseURLs,
+		RequestPaths:    paths,
+		TechDetect:      true,
+		FollowRedirects: true,
+		Proxy:           p.cfg.ProxyURL,
 		// Modest concurrency: hammering one root with many paths can overwhelm a
 		// fragile target into dropping connections, which read as false negatives.
 		Threads: 15,
@@ -745,7 +747,7 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 		}
 		if matched {
 			urls = append(urls, resp.URL)
-			fmt.Printf("  %s [%s]\n", resp.URL, strings.Join(dedup(hits[resp.URL]), ","))
+			fmt.Printf("  %s \x1b[36m[%s]\x1b[0m\n", resp.URL, strings.Join(dedup(hits[resp.URL]), ","))
 		}
 	}
 	fmt.Printf("[32m[*][0m product-path probe: %d path(s) matched a fingerprint\n", len(urls))
@@ -1059,10 +1061,11 @@ func (p *Pipeline) vhostProbe(ctx context.Context, liveURLs []string) ([]string,
 	fmt.Printf("\x1b[32m[*]\x1b[0m vhost probe: %d domain-bound candidate(s)...\n", len(targets))
 
 	probe := httpprobe.New(httpprobe.Options{
-		Targets:    targets,
-		TechDetect: true,
-		Proxy:      p.cfg.ProxyURL,
-		Threads:    50,
+		Targets:         targets,
+		TechDetect:      true,
+		FollowRedirects: true,
+		Proxy:           p.cfg.ProxyURL,
+		Threads:         50,
 	})
 	ch, err := probe.Run(ctx)
 	if err != nil {

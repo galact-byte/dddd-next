@@ -42,6 +42,18 @@
 
 ---
 
+## v0.1.38-redirect — 真机漏报根因：不跟随重定向（通用 bug，非 Nacos 个案）
+
+> 真机对照原版：dddd-next 漏掉 Nacos CVE-2021-29441 等。诊断后确认**不是指纹引擎 bug**——新增 `internal/app/fpdiag_test.go` 端到端测试证明：给正常 nacos 页面，httpprobe 正确捕获 title/body、引擎正确命中 Alibaba-Nacos。
+
+- **根因（通用）**：httpprobe `FollowRedirects=false`，**不跟随重定向**。许多产品的指纹页在 302 之后（shiro 登录页 `/login;jsessionid=`、各类控制台），不跟随就只看到空的 302 响应 → 指纹漏 → 精准 POC 漏选 → CVE 漏报。原版是跟随的。
+- **修复**：probeAndFingerprint / dirProbe / vhostProbe 三处探测全部 `FollowRedirects: true`。这是会影响一大批靠重定向后页面识别的产品的通用修复，非给 Nacos 开小灶。
+- **指纹名上色**：存活 web / 命中路径的指纹标签青色显示（对齐原版观感）。
+- 新增 `fpdiag_test.go` 作为指纹全链路回归测试（守住 title=/body= 规则不被静默丢弃）。
+- `go build` / `go test ./...` 24 包全绿。
+
+---
+
 ## v0.1.36-output — 修 nuclei-ignore 报错 + 过程逐行展示（对齐原版观感）
 
 > 真机实测反馈：nuclei 每次报 `Could not read nuclei-ignore file`；且端口/漏洞结果不像原版那样逐行显示，过程不直观。
