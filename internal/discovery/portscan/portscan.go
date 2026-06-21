@@ -9,6 +9,7 @@ package portscan
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -170,14 +171,31 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string) <-chan Result {
 	return out
 }
 
+// dialOpen reports whether host:port accepts a TCP connection. A single connect
+// can be dropped under heavy concurrency or by a slow-to-accept service (e.g. a
+// booting Java app like Nacos), which would wrongly read as a closed port — so a
+// timed-out attempt is retried once. A refused connection (RST) is definitively
+// closed and returns immediately, keeping full-range scans fast.
 func dialOpen(ctx context.Context, host string, port int, timeout time.Duration) bool {
-	d := net.Dialer{Timeout: timeout}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
-	if err != nil {
-		return false
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	for attempt := 0; attempt < 2; attempt++ {
+		d := net.Dialer{Timeout: timeout}
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		// Only a timeout warrants a retry; anything else (refused, unreachable)
+		// is a definitive answer and retrying just wastes time.
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			return false
+		}
 	}
-	_ = conn.Close()
-	return true
+	return false
 }
 
 // ExpandHosts turns IP / CIDR / IP-range specs into a deduplicated list of IPv4

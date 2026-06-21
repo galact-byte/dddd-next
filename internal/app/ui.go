@@ -36,14 +36,15 @@ func sevColor(s types.Severity) string {
 // print an end-of-scan summary without each stage threading counters back.
 type countingReporter struct {
 	reporter.Reporter
-	mu       sync.Mutex
-	fps      int
-	findings int
-	bySev    map[types.Severity]int
+	mu           sync.Mutex
+	fps          int
+	findings     int
+	bySev        map[types.Severity]int
+	seenFindings map[string]struct{}
 }
 
 func newCountingReporter(r reporter.Reporter) *countingReporter {
-	return &countingReporter{Reporter: r, bySev: make(map[types.Severity]int)}
+	return &countingReporter{Reporter: r, bySev: make(map[types.Severity]int), seenFindings: make(map[string]struct{})}
 }
 
 func (c *countingReporter) WriteFingerprint(target string, fp types.Fingerprint) error {
@@ -54,11 +55,31 @@ func (c *countingReporter) WriteFingerprint(target string, fp types.Fingerprint)
 }
 
 func (c *countingReporter) WriteFinding(f types.Finding) error {
+	key := findingDedupKey(f)
 	c.mu.Lock()
+	if _, ok := c.seenFindings[key]; ok {
+		c.mu.Unlock()
+		return nil
+	}
+	c.seenFindings[key] = struct{}{}
 	c.findings++
 	c.bySev[f.Severity]++
 	c.mu.Unlock()
 	return c.Reporter.WriteFinding(f)
+}
+
+func (c *countingReporter) SeenFinding(f types.Finding) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.seenFindings[findingDedupKey(f)]
+	return ok
+}
+
+func findingDedupKey(f types.Finding) string {
+	return strings.Join([]string{f.ID, f.Name, f.Target, f.Template, string(f.Severity)}, "\x00")
 }
 
 func (p *Pipeline) printSummary() {

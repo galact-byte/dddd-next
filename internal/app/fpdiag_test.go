@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -61,6 +62,118 @@ func TestNacosFingerprintEndToEnd(t *testing.T) {
 
 	if !contains(got, "Alibaba-Nacos") {
 		t.Errorf("Alibaba-Nacos not matched; got %v", got)
+	}
+}
+
+func TestDVWAFingerprintEndToEnd(t *testing.T) {
+	const dvwaHTML = `<!DOCTYPE html><html><head>` +
+		`<title>Login :: Damn Vulnerable Web Application (DVWA) v1.9</title>` +
+		`<link rel="stylesheet" type="text/css" href="dvwa/css/login.css" />` +
+		`</head><body><img src="dvwa/images/login_logo.png" /></body></html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(dvwaHTML))
+	}))
+	defer srv.Close()
+
+	eng, _, err := fingerprint.LoadYAML("../../configs/fingers/finger.yaml")
+	if err != nil {
+		t.Fatalf("load finger.yaml: %v", err)
+	}
+
+	probe := httpprobe.New(httpprobe.Options{
+		Targets:    []string{srv.URL},
+		TechDetect: true,
+	})
+	ch, err := probe.Run(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+
+	var got []string
+	for resp := range ch {
+		t.Logf("URL=%s Title=%q BodyLen=%d BodyHasDVWA=%v", resp.URL, resp.Title, len(resp.Body), strings.Contains(resp.Body, "dvwa/css/login.css"))
+		for _, fp := range eng.Match(httpprobe.ToFingerprintContext(resp)) {
+			got = append(got, fp.Name)
+		}
+	}
+
+	if !contains(got, "DVWA") {
+		t.Errorf("DVWA not matched; got %v", got)
+	}
+}
+
+func TestWebGoatFingerprintEndToEnd(t *testing.T) {
+	const webGoatHTML = `<!DOCTYPE html><html><head>` +
+		`<title>Login Page</title>` +
+		`<link rel="stylesheet" type="text/css" href="/WebGoat/css/main.css"/>` +
+		`</head><body><a href="/WebGoat/start.mvc" class="logo"><span>Web</span>Goat</a></body></html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(webGoatHTML))
+	}))
+	defer srv.Close()
+
+	eng, _, err := fingerprint.LoadYAML("../../configs/fingers/finger.yaml")
+	if err != nil {
+		t.Fatalf("load finger.yaml: %v", err)
+	}
+
+	probe := httpprobe.New(httpprobe.Options{
+		Targets:    []string{srv.URL},
+		TechDetect: true,
+	})
+	ch, err := probe.Run(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+
+	var got []string
+	for resp := range ch {
+		for _, fp := range eng.Match(httpprobe.ToFingerprintContext(resp)) {
+			got = append(got, fp.Name)
+		}
+	}
+
+	if !contains(got, "WebGoat") {
+		t.Errorf("WebGoat not matched; got %v", got)
+	}
+}
+
+func TestLiveDVWAProbeDiagnostic(t *testing.T) {
+	target := os.Getenv("DDDD_LIVE_DVWA_URL")
+	if target == "" {
+		t.Skip("set DDDD_LIVE_DVWA_URL to run live DVWA probe diagnostic")
+	}
+
+	eng, _, err := fingerprint.LoadYAML("../../configs/fingers/finger.yaml")
+	if err != nil {
+		t.Fatalf("load finger.yaml: %v", err)
+	}
+	probe := httpprobe.New(httpprobe.Options{
+		Targets:         []string{target},
+		TechDetect:      true,
+		FollowRedirects: true,
+	})
+	ch, err := probe.Run(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+
+	for resp := range ch {
+		t.Logf("URL=%s Status=%d Title=%q BodyLen=%d BodyHasDVWA=%v BodyHasCSS=%v Headers=%q",
+			resp.URL, resp.StatusCode, resp.Title, len(resp.Body),
+			strings.Contains(strings.ToLower(resp.Body), "damn vulnerable"),
+			strings.Contains(resp.Body, "dvwa/css/login.css"),
+			resp.RawHeaders,
+		)
+		var names []string
+		for _, fp := range eng.Match(httpprobe.ToFingerprintContext(resp)) {
+			names = append(names, fp.Name)
+		}
+		t.Logf("fingerprints=%v", names)
 	}
 }
 

@@ -28,6 +28,16 @@ func TestCheckLiveEmpty(t *testing.T) {
 	}
 }
 
+func TestSplitLoopbackHosts(t *testing.T) {
+	alive, pending := splitLoopbackHosts([]string{"127.0.0.1", "localhost", "192.0.2.10"})
+	if len(alive) != 2 || alive[0] != "127.0.0.1" || alive[1] != "localhost" {
+		t.Fatalf("loopback alive hosts = %v", alive)
+	}
+	if len(pending) != 1 || pending[0] != "192.0.2.10" {
+		t.Fatalf("pending hosts = %v", pending)
+	}
+}
+
 // TestChecksumValid verifies the ICMP checksum invariant: re-summing a packet
 // that already carries its checksum folds to zero.
 func TestChecksumValid(t *testing.T) {

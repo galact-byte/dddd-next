@@ -21,7 +21,7 @@ import (
 
 const (
 	appName    = "dddd-next"
-	appVersion = "0.1.39-dev"
+	appVersion = "0.1.42-dev"
 )
 
 func main() {
@@ -53,17 +53,20 @@ func runScan(args []string) int {
 		fmt.Fprintln(os.Stderr, "Run `dddd help` for usage.")
 		return 2
 	}
+	if cfg.ProxyTest {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := config.TestProxy(ctx, cfg.ProxyURL, cfg.ProxyTestURL); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		fmt.Printf("[*] proxy test ok: %s via %s\n", cfg.ProxyTestURL, config.RedactURLCredentials(cfg.ProxyURL))
+	}
 
 	printBanner()
 
 	outDir := setupOutputDir()
-	if cfg.Output != "" {
-		cfg.Output = filepath.Join(outDir, cfg.Output)
-	}
-	cfg.HTMLOutput = filepath.Join(outDir, "report.html")
-	if cfg.AuditLog {
-		cfg.AuditLogFile = filepath.Join(outDir, cfg.AuditLogFile)
-	}
+	cfg = prepareOutputPaths(cfg, outDir)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -86,9 +89,40 @@ func runScan(args []string) int {
 
 func setupOutputDir() string {
 	ts := time.Now().Format("2006-01-02_150405")
-	dir := filepath.Join("output", ts)
-	os.MkdirAll(dir, 0755)
-	return dir
+	return createOutputDir("output", ts)
+}
+
+func createOutputDir(base, stamp string) string {
+	_ = os.MkdirAll(base, 0755)
+	for i := 1; ; i++ {
+		name := stamp
+		if i > 1 {
+			name = fmt.Sprintf("%s-%d", stamp, i)
+		}
+		dir := filepath.Join(base, name)
+		err := os.Mkdir(dir, 0755)
+		if err == nil {
+			return dir
+		}
+		if os.IsExist(err) {
+			continue
+		}
+		_ = os.MkdirAll(dir, 0755)
+		return dir
+	}
+}
+
+func prepareOutputPaths(cfg config.Config, outDir string) config.Config {
+	if cfg.Output != "" {
+		cfg.Output = filepath.Join(outDir, cfg.Output)
+	}
+	if cfg.HTMLOutput != "" {
+		cfg.HTMLOutput = filepath.Join(outDir, cfg.HTMLOutput)
+	}
+	if cfg.AuditLog {
+		cfg.AuditLogFile = filepath.Join(outDir, cfg.AuditLogFile)
+	}
+	return cfg
 }
 
 func printBanner() {

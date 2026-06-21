@@ -10677,7 +10677,7 @@ SLACKWARE-operating system:
 CHISCDC-体检档案查询系统:
   - 'body="<div class=\"login_foot\">技术支持：中卫信软件</div>" && body="体检"'
 WebGoat:
-  - 'header="realm=\"WebGoat" || banner="realm=\"WebGoat"'
+  - 'header="realm=\"WebGoat" || banner="realm=\"WebGoat" || (body="/WebGoat/start.mvc" && body="<span>Web</span>Goat") || (body="/WebGoat/css/main.css" && body="/WebGoat/login")'
 Exposure-Shopify-Access-Token2:
   - 'body~="\b(shpat_[a-fA-F0-9]{32})\b"'
 Hiawatha-web-server:

@@ -97,12 +97,50 @@ func CheckLive(ctx context.Context, hosts []string, forcePing bool) []string {
 	if len(hosts) == 0 {
 		return nil
 	}
+	alive, pending := splitLoopbackHosts(hosts)
+	if len(pending) == 0 {
+		return alive
+	}
 	if !forcePing {
-		if alive, ok := icmpEcho(ctx, hosts); ok {
-			return alive
+		if detected, ok := icmpEcho(ctx, pending); ok {
+			return mergeAlive(hosts, append(alive, detected...))
 		}
 	}
-	return pingCommand(ctx, hosts)
+	return mergeAlive(hosts, append(alive, pingCommand(ctx, pending)...))
+}
+
+func splitLoopbackHosts(hosts []string) (alive []string, pending []string) {
+	for _, host := range hosts {
+		if isLoopbackHost(host) {
+			alive = append(alive, host)
+			continue
+		}
+		pending = append(pending, host)
+	}
+	return alive, pending
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func mergeAlive(hosts, alive []string) []string {
+	aliveSet := make(map[string]struct{}, len(alive))
+	for _, host := range alive {
+		aliveSet[host] = struct{}{}
+	}
+	out := make([]string, 0, len(aliveSet))
+	for _, host := range hosts {
+		if _, ok := aliveSet[host]; ok {
+			out = append(out, host)
+			delete(aliveSet, host)
+		}
+	}
+	return out
 }
 
 // icmpEcho sends one echo request per host over a shared raw socket. ok is
