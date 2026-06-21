@@ -19,10 +19,9 @@ import (
 	"dddd-next/internal/updater"
 )
 
-const (
-	appName    = "dddd-next"
-	appVersion = "0.1.42-dev"
-)
+const appName = "dddd-next"
+
+var appVersion = "0.1.42-dev"
 
 func main() {
 	loadDotEnv()
@@ -30,7 +29,7 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "version", "-v", "--version":
-			fmt.Printf("%s %s\n", appName, appVersion)
+			fmt.Print(versionLine())
 			return
 		case "help", "-h", "--help":
 			printHelp()
@@ -40,6 +39,10 @@ func main() {
 		}
 	}
 	os.Exit(runScan(os.Args))
+}
+
+func versionLine() string {
+	return fmt.Sprintf("%s %s\n", appName, appVersion)
 }
 
 func runScan(args []string) int {
