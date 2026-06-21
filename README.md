@@ -1,7 +1,5 @@
 # dddd-next
 
-> 面向授权环境的自动化资产测绘 + 漏洞扫描工具，基于原 dddd 的设计思路做现代化重写，覆盖指纹识别、弱口令、nuclei POC、Shiro 专项检测和 HTML 报告。
-
 ## 项目定位
 
 `dddd-next` 是对原 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 项目的现代化重写。原项目自 2024 年后基本停更，但其依赖的 `nuclei`、`httpx`、`subfinder` 等仍在快速迭代，内置 POC 也已老化。本项目在保留 dddd 设计哲学的基础上，采用现代 Go 标准结构重构，依赖直接跟随 projectdiscovery 主线版本。
@@ -165,38 +163,6 @@ set HTTPS_PROXY=http://127.0.0.1:7890
 $env:HTTPS_PROXY="http://127.0.0.1:7890"
 # Linux / macOS
 export HTTPS_PROXY=http://127.0.0.1:7890
-```
-
-## 发布 Release
-
-本仓库使用 GitHub Actions + GoReleaser 发布版本。推送 `v*` tag 后会自动：
-
-1. 运行 `go test ./...`。
-2. 构建 Windows amd64、Linux amd64、Linux arm64 二进制。
-3. 上传单文件 Release 资产，不再额外上传 `configs/` 压缩包。
-4. 生成 `checksums.txt` 并创建 GitHub Release。
-
-GitHub 会自动显示 Source code 的 zip / tar.gz，这是平台默认产物；项目自身上传的资产保持单文件。
-
-发布命令示例：
-
-```bash
-git tag v0.1.42
-git push origin main
-git push origin v0.1.42
-```
-
-本地预检查可使用：
-
-```bash
-goreleaser check
-goreleaser release --snapshot --clean
-```
-
-GitHub 右上角 About 建议填写：
-
-```text
-基于 SleepingBag945/dddd 设计思路的现代化重写，跟随 projectdiscovery 主线依赖。
 ```
 
 ## 致谢
