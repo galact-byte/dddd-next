@@ -17,6 +17,13 @@ Shiro:
     - base
   pocs:
     - shiro-detect
+Alibaba-Nacos:
+  type:
+    - root
+    - dir
+  pocs:
+    - CVE-2021-29441
+    - CVE-2021-29442
 General-Poc-Log4j2:
   type:
     - root
@@ -57,8 +64,8 @@ func TestLoadSplitsGeneralAndDedupes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := m.Products(); got != 2 {
-		t.Errorf("Products() = %d, want 2", got)
+	if got := m.Products(); got != 3 {
+		t.Errorf("Products() = %d, want 3", got)
 	}
 	// CVE-2021-44228 sits under both General-Poc entries → collapses to one.
 	if got := m.GeneralPocs(); len(got) != 3 {
@@ -112,6 +119,35 @@ func TestResolveWithoutGeneral(t *testing.T) {
 	}
 }
 
+func TestResolveHonorsWorkflowTargetTypes(t *testing.T) {
+	dir := t.TempDir()
+	path := writeMapping(t, dir)
+	pocDir := filepath.Join(dir, "legacy")
+	touchPOCs(t, pocDir, "CVE-2021-29441", "CVE-2021-29442", "shiro-detect")
+
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	out, _ := m.Resolve(map[string][]string{
+		"http://nacos.local/nacos/": {"Alibaba-Nacos"},
+		"http://app.local/admin/":   {"Shiro"},
+	}, pocDir, false)
+
+	if _, ok := out["http://nacos.local"]; !ok {
+		t.Fatalf("Nacos root target missing; got targets %v", keysOfStringSlices(out))
+	}
+	if _, ok := out["http://nacos.local/nacos/"]; ok {
+		t.Fatalf("Nacos base path should not be used without base type; got targets %v", keysOfStringSlices(out))
+	}
+	if _, ok := out["http://app.local/admin/"]; !ok {
+		t.Fatalf("base target missing for Shiro; got targets %v", keysOfStringSlices(out))
+	}
+	if _, ok := out["http://app.local"]; ok {
+		t.Fatalf("root target should not be used without root type; got targets %v", keysOfStringSlices(out))
+	}
+}
+
 func TestUnionDeduplicates(t *testing.T) {
 	all := Union(map[string][]string{
 		"a": {"/p/x.yaml", "/p/y.yaml"},
@@ -120,4 +156,12 @@ func TestUnionDeduplicates(t *testing.T) {
 	if len(all) != 3 {
 		t.Errorf("Union = %v, want 3 unique", all)
 	}
+}
+
+func keysOfStringSlices(m map[string][]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

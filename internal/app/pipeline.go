@@ -12,10 +12,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,12 +60,18 @@ type Pipeline struct {
 	ipDomains map[string][]string
 
 	counts *countingReporter // tallies for the end-of-run summary
+
+	// freshIdx maps a template basename (lowercased, no .yaml) to its path in
+	// the updated nuclei-templates dir, so precise mode prefers the maintained
+	// v3-compatible template over the frozen legacy/ copy. Built lazily once.
+	freshIdx      map[string]string
+	freshIdxBuilt bool
 }
 
 // New loads the fingerprint database and sets up the reporter/auditor sinks.
 // configDir is where finger.yaml and nuclei-templates live (next to the binary).
 func New(cfg config.Config, configDir string) (*Pipeline, error) {
-	fingerPath := filepath.Join(configDir, "fingers", "finger.yaml")
+	fingerPath := configuredPath(cfg.FingerConfigFilePath, filepath.Join(configDir, "fingers", "finger.yaml"))
 	eng, _, err := fingerprint.LoadYAML(fingerPath)
 	if err != nil {
 		return nil, fmt.Errorf("app: load fingerprints from %s: %w", fingerPath, err)
@@ -92,13 +100,13 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 func (p *Pipeline) Run(ctx context.Context) error {
 	defer p.printSummary()
 
-	probeInputs, domains, portscanSpecs, searchQueries, fingerImports := p.parseTargets()
+	probeInputs, directPorts, domains, portscanSpecs, searchQueries, fingerImports := p.parseTargets()
 
 	if p.cfg.LowPerception {
 		return p.runLowPerception(ctx, searchQueries)
 	}
 
-	var openPorts []portscan.Result
+	openPorts := append([]portscan.Result(nil), directPorts...)
 	if len(portscanSpecs) > 0 {
 		openPorts = append(openPorts, p.scanPorts(ctx, portscanSpecs)...)
 	}
@@ -107,10 +115,8 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	if len(openPorts) > 0 {
 		services := p.detectServices(ctx, openPorts)
-		for _, r := range openPorts {
-			probeInputs = append(probeInputs, fmt.Sprintf("%s:%d", r.Host, r.Port))
-		}
-		if !p.cfg.NoBrute {
+		probeInputs = append(probeInputs, webProbeInputs(openPorts, services)...)
+		if shouldRunGoPocs(p.cfg) {
 			p.bruteForce(ctx, openPorts, services)
 		}
 	}
@@ -163,7 +169,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 	if len(liveURLs) > 0 && !p.cfg.NoPoc {
 		p.runNuclei(ctx, liveURLs, fpHits)
-		p.shiroScan(ctx, liveURLs)
+		if shouldRunShiro(p.cfg) {
+			p.shiroScan(ctx, liveURLs)
+		}
 	}
 	return nil
 }
@@ -186,7 +194,7 @@ func (p *Pipeline) Close() error {
 // parseTargets classifies each -t value into a directly-probeable input, a bare
 // domain that needs enumeration/resolution first, a CIDR/range that needs a
 // port scan, or a search query that needs the recon engines.
-func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQueries []string, fingerImports map[string][]string) {
+func (p *Pipeline) parseTargets() (probeInputs []string, directPorts []portscan.Result, domains, portscanSpecs, searchQueries []string, fingerImports map[string][]string) {
 	fingerImports = make(map[string][]string)
 	for _, raw := range p.cfg.Targets {
 		t, err := classifier.Parse(raw)
@@ -198,7 +206,7 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 		case types.InputURL:
 			probeInputs = append(probeInputs, t.URL)
 		case types.InputIPPort, types.InputDomainPort:
-			probeInputs = append(probeInputs, hostPort(t))
+			directPorts = append(directPorts, portscan.Result{Host: t.Host, Port: t.Port})
 		case types.InputDomain:
 			domains = append(domains, t.Host)
 		case types.InputIP, types.InputCIDR, types.InputIPRange:
@@ -213,7 +221,7 @@ func (p *Pipeline) parseTargets() (probeInputs, domains, portscanSpecs, searchQu
 			fmt.Printf("[31m[!][0m %q: unrecognized input, skipped\n", raw)
 		}
 	}
-	return probeInputs, domains, portscanSpecs, searchQueries, fingerImports
+	return probeInputs, directPorts, domains, portscanSpecs, searchQueries, fingerImports
 }
 
 // scanPorts expands CIDR/IP-range specs into hosts, optionally pre-filters by
@@ -225,7 +233,7 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 		return nil
 	}
 
-	if p.cfg.PingFirst || p.cfg.TCPPing {
+	if !p.cfg.SkipHostDiscovery && (p.cfg.PingFirst || p.cfg.TCPPing) {
 		hosts = p.hostDiscovery(ctx, hosts)
 		if len(hosts) == 0 {
 			return nil
@@ -295,7 +303,7 @@ func (p *Pipeline) hostDiscovery(ctx context.Context, hosts []string) []string {
 	before := len(hosts)
 	aliveSet := make(map[string]struct{})
 
-	if p.cfg.PingFirst {
+	if p.cfg.PingFirst && !p.cfg.NoICMPPing {
 		for _, h := range hostalive.CheckLive(ctx, hosts, false) {
 			aliveSet[h] = struct{}{}
 		}
@@ -383,8 +391,7 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result, 
 
 	dictDir := filepath.Join(p.configDir, "dict")
 	fmt.Printf("[32m[*][0m weak-credential brute force on %d open port(s)...\n", len(endpoints))
-	opts := gopocs.DefaultOptions(dictDir)
-	opts.CustomCreds = p.cfg.CustomCreds
+	opts := buildGoPocOptions(p.cfg, dictDir)
 	eng := gopocs.New(opts)
 
 	n := 0
@@ -437,6 +444,12 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 	fmt.Printf("[32m[*][0m recon: %d search query(ies) via fofa/hunter/quake...\n", len(queries))
 	opts := uncover.DefaultOptions()
 	opts.Proxy = p.cfg.ProxyURL
+	if len(p.cfg.ReconAgents) > 0 {
+		opts.Agents = append([]string(nil), p.cfg.ReconAgents...)
+	}
+	if p.cfg.ReconLimit > 0 {
+		opts.Limit = p.cfg.ReconLimit
+	}
 	src := uncover.New(opts)
 
 	seen := make(map[string]struct{})
@@ -489,19 +502,21 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 		}
 	}
 
-	opts := subfinder.DefaultOptions()
-	opts.Domains = domains
-	opts.Proxy = p.cfg.ProxyURL
-	results, errCh, err := subfinder.New(opts).Run(ctx)
-	if err != nil {
-		fmt.Printf("[31m[!][0m subfinder: %v\n", err) // keep brute results; don't abort enum
-	} else {
-		for r := range results {
-			set[r.Host] = struct{}{}
-		}
-		for e := range errCh {
-			if e != nil {
-				fmt.Printf("[31m[!][0m subfinder: %v\n", e)
+	if shouldRunPassiveSubfinder(p.cfg) {
+		opts := subfinder.DefaultOptions()
+		opts.Domains = domains
+		opts.Proxy = p.cfg.ProxyURL
+		results, errCh, err := subfinder.New(opts).Run(ctx)
+		if err != nil {
+			fmt.Printf("[31m[!][0m subfinder: %v\n", err) // keep brute results; don't abort enum
+		} else {
+			for r := range results {
+				set[r.Host] = struct{}{}
+			}
+			for e := range errCh {
+				if e != nil {
+					fmt.Printf("[31m[!][0m subfinder: %v\n", e)
+				}
 			}
 		}
 	}
@@ -518,13 +533,17 @@ func (p *Pipeline) enumerateSubdomains(ctx context.Context, domains []string) []
 // answer. Wildcard-DNS domains (a sentinel label still resolves) are skipped,
 // else every word "resolves" and floods the scan with non-existent hosts.
 func (p *Pipeline) subdomainBrute(ctx context.Context, domains []string) []string {
-	words, err := subbrute.LoadWordlist(filepath.Join(p.configDir, "dict", "subdomains.txt"))
+	words, err := subbrute.LoadWordlist(configuredPath(p.cfg.SubdomainWordListFile, filepath.Join(p.configDir, "dict", "subdomains.txt")))
 	if err != nil {
 		fmt.Printf("[31m[!][0m subbrute: %v; skipping brute-force\n", err)
 		return nil
 	}
 
-	r, err := dnsx.New(dnsx.DefaultOptions())
+	dnsOpts := dnsx.DefaultOptions()
+	if p.cfg.SubdomainBruteThreads > 0 {
+		dnsOpts.Threads = p.cfg.SubdomainBruteThreads
+	}
+	r, err := dnsx.New(dnsOpts)
 	if err != nil {
 		fmt.Printf("[31m[!][0m subbrute dnsx: %v; skipping brute-force\n", err)
 		return nil
@@ -589,13 +608,13 @@ func (p *Pipeline) identifyCDN(ctx context.Context, domains []string) []string {
 			_ = p.reporter.WriteFingerprint(d, types.Fingerprint{
 				Name: "CDN: " + results[i].Provider, Target: d, Source: "cdn", Confidence: 80,
 			})
-			if p.cfg.SkipCDN {
+			if shouldDropCDN(p.cfg) {
 				continue
 			}
 		}
 		keep = append(keep, d)
 	}
-	if p.cfg.SkipCDN {
+	if shouldDropCDN(p.cfg) {
 		fmt.Printf("[32m[*][0m CDN: %d flagged and dropped (-skip-cdn), %d kept\n", flagged, len(keep))
 	} else {
 		fmt.Printf("[32m[*][0m CDN: %d flagged (still probed; -skip-cdn to exclude)\n", flagged)
@@ -631,12 +650,7 @@ func (p *Pipeline) resolveDomains(ctx context.Context, domains []string) []strin
 // names, which the precise nuclei stage uses to pick each target's POCs.
 func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]string, map[string][]string) {
 	fmt.Printf("[32m[*][0m HTTP probing %d target(s)...\n", len(inputs))
-	probe := httpprobe.New(httpprobe.Options{
-		Targets:         inputs,
-		TechDetect:      true,
-		FollowRedirects: true, // product pages often live behind a 302 (login/console)
-		Proxy:           p.cfg.ProxyURL,
-	})
+	probe := httpprobe.New(buildHTTPProbeOptions(p.cfg, inputs, nil))
 	ch, err := probe.Run(ctx)
 	if err != nil {
 		fmt.Printf("[31m[!][0m httpx: %v\n", err)
@@ -646,7 +660,9 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 	var live []string
 	hits := make(map[string][]string)
 	active, passive := 0, 0
-	for resp := range ch {
+	var redirectTargets []string
+	seenRedirectTargets := make(map[string]struct{})
+	handleResponse := func(resp httpprobe.Response, collectRedirects bool) {
 		live = append(live, resp.URL)
 		p.recordHostIPs(resp.Host, resp.A)
 		_ = p.auditor.LogResponse(resp.URL, "http-probe", map[string]any{
@@ -679,9 +695,89 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 		} else {
 			fmt.Printf("  %s\n", resp.URL)
 		}
+		if !collectRedirects {
+			return
+		}
+		next := sameOriginRedirectTarget(resp)
+		if next == "" {
+			return
+		}
+		if _, ok := seenRedirectTargets[next]; ok {
+			return
+		}
+		seenRedirectTargets[next] = struct{}{}
+		redirectTargets = append(redirectTargets, next)
+	}
+	for resp := range ch {
+		handleResponse(resp, true)
+	}
+	if len(redirectTargets) > 0 {
+		seenLive := make(map[string]struct{}, len(live))
+		for _, u := range live {
+			seenLive[u] = struct{}{}
+		}
+		var targets []string
+		for _, u := range redirectTargets {
+			if _, ok := seenLive[u]; ok {
+				continue
+			}
+			targets = append(targets, u)
+		}
+		if len(targets) > 0 {
+			fmt.Printf("[32m[*][0m HTTP redirect follow-up probing %d target(s)...\n", len(targets))
+			redirectProbe := httpprobe.New(buildHTTPProbeOptions(p.cfg, targets, nil))
+			redirectCh, redirectErr := redirectProbe.Run(ctx)
+			if redirectErr != nil {
+				fmt.Printf("[31m[!][0m httpx redirect follow-up: %v\n", redirectErr)
+			} else {
+				for resp := range redirectCh {
+					handleResponse(resp, false)
+				}
+			}
+		}
 	}
 	fmt.Printf("[32m[*][0m live web: %d, fingerprint hits: %d active + %d passive(tech)\n", len(live), active, passive)
 	return live, hits
+}
+
+func sameOriginRedirectTarget(resp httpprobe.Response) string {
+	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return ""
+	}
+	loc := responseHeaderValue(resp.RawHeaders, "Location")
+	if loc == "" {
+		return ""
+	}
+	base, err := url.Parse(resp.URL)
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return ""
+	}
+	if base.Path == "" {
+		base.Path = "/"
+	}
+	ref, err := url.Parse(loc)
+	if err != nil {
+		return ""
+	}
+	next := base.ResolveReference(ref)
+	if next.Scheme != base.Scheme || !strings.EqualFold(next.Host, base.Host) {
+		return ""
+	}
+	if next.String() == resp.URL {
+		return ""
+	}
+	return next.String()
+}
+
+func responseHeaderValue(rawHeaders, name string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(rawHeaders, "\r\n", "\n"), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), name) {
+			continue
+		}
+		return strings.TrimSpace(value)
+	}
+	return ""
 }
 
 // dirProbe requests well-known product paths (/nacos/, /druid/, ...) on each
@@ -701,7 +797,7 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 		}
 	}
 
-	db, err := dirscan.Load(filepath.Join(p.configDir, "dir.yaml"))
+	db, err := dirscan.Load(configuredPath(p.cfg.DirSearchYaml, filepath.Join(p.configDir, "dir.yaml")))
 	if err != nil {
 		fmt.Printf("[31m[!][0m dirscan: %v; skipping product-path probe\n", err)
 		return nil, nil
@@ -731,6 +827,9 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 	var urls []string
 	hits := make(map[string][]string)
 	for resp := range ch {
+		if !shouldFingerprintDirProbeResponse(resp) {
+			continue
+		}
 		var matched bool
 		root := rootURL(resp.URL)
 		for _, fp := range p.finger.Match(httpprobe.ToFingerprintContext(resp)) {
@@ -753,10 +852,18 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 	return urls, hits
 }
 
+func shouldFingerprintDirProbeResponse(resp httpprobe.Response) bool {
+	return resp.StatusCode != 404
+}
+
 // shiroScan brute-forces the Shiro rememberMe key on each live web root. The
 // per-target key loop is sequential; only the targets run in parallel, so a
 // vulnerable host isn't hit by the whole key list at once.
 func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
+	urls = shiroTargets(urls)
+	if len(urls) == 0 {
+		return
+	}
 	keys, err := shiro.LoadKeys(filepath.Join(p.configDir, "dict", "shirokeys.txt"))
 	if err != nil {
 		fmt.Printf("[31m[!][0m shiro: %v; skipping shiro check\n", err)
@@ -785,6 +892,9 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 				return
 			}
 			fmt.Println(findingLine(*f))
+			if f.Description != "" {
+				fmt.Printf("      \x1b[2m%s\x1b[0m\n", f.Description) // surface the cracked key/mode
+			}
 			if werr := p.reporter.WriteFinding(*f); werr != nil {
 				fmt.Printf("[31m[!][0m report: %v\n", werr)
 			}
@@ -798,60 +908,132 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 	fmt.Printf("[32m[*][0m shiro: %d weak key(s) found\n", hits)
 }
 
+func shiroTargets(urls []string) []string {
+	normalized := make([]string, 0, len(urls))
+	hasRoot := make(map[string]bool)
+	for _, raw := range urls {
+		target, root, isRoot := normalizeShiroTarget(raw)
+		if target == "" {
+			continue
+		}
+		normalized = append(normalized, target)
+		if isRoot {
+			hasRoot[root] = true
+		}
+	}
+
+	seen := make(map[string]struct{}, len(normalized))
+	out := make([]string, 0, len(normalized))
+	for _, target := range normalized {
+		_, root, _ := normalizeShiroTarget(target)
+		if hasRoot[root] {
+			target = root
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		out = append(out, target)
+	}
+	return out
+}
+
+func normalizeShiroTarget(raw string) (target, root string, isRoot bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", "", false
+	}
+	root = u.Scheme + "://" + u.Host
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = stripPathParams(u.Path)
+	if u.Path == "" || u.Path == "/" {
+		return root, root, true
+	}
+	return u.String(), root, false
+}
+
+func stripPathParams(path string) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if idx := strings.IndexByte(part, ';'); idx >= 0 {
+			parts[i] = part[:idx]
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
 // runNuclei scans the live URLs. Precise mode (default) loads only the POC
 // files the fingerprint hits map to; full mode (-full) runs the whole
 // nuclei-templates directory.
 func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[string][]string) {
-	opts := nuclei.DefaultOptions()
-	if p.cfg.ProxyURL != "" {
-		opts.Proxy = []string{p.cfg.ProxyURL}
-	}
-	if len(p.cfg.Severity) > 0 {
-		opts.Severities = strings.Join(p.cfg.Severity, ",")
-	}
-	if len(p.cfg.ExcludeSeverity) > 0 {
-		opts.ExcludeSeverities = strings.Join(p.cfg.ExcludeSeverity, ",")
-	}
-	if len(p.cfg.Tags) > 0 {
-		opts.Tags = p.cfg.Tags
-	}
-	if len(p.cfg.ExcludeTags) > 0 {
-		opts.ExcludeTags = p.cfg.ExcludeTags
-	}
+	opts := buildNucleiOptions(p.cfg)
 
 	if p.cfg.FullScan {
-		tmplDir := filepath.Join(p.configDir, "nuclei-templates")
+		tmplDir := p.nucleiTemplateDir()
 		if info, err := os.Stat(tmplDir); err != nil || !info.IsDir() {
 			fmt.Printf("[31m[!][0m nuclei templates not found at %s — run `dddd update` first; skipping vuln scan\n", tmplDir)
 			return
 		}
 		opts.TemplatesDir = tmplDir
 		fmt.Printf("[32m[*][0m nuclei full scan: %d target(s) x all templates...\n", len(urls))
-	} else {
-		pocs := p.resolvePOCs(fpHits)
-		if len(pocs) == 0 {
-			fmt.Println("[32m[*][0m nuclei precise: no fingerprint-matched POCs, skipping vuln scan")
+	} else if strings.TrimSpace(p.cfg.PocName) != "" {
+		pocs := p.resolvePOCsByQuery(p.cfg.PocName)
+		targets := directPOCTargets(urls)
+		if len(pocs) == 0 || len(targets) == 0 {
+			fmt.Println("[32m[*][0m nuclei fuzzy POC: no matched POC or target, skipping vuln scan")
 			return
 		}
 		opts.Templates = pocs
-		fmt.Printf("[32m[*][0m nuclei precise scan: %d target(s) x %d matched POC(s)...\n", len(urls), len(pocs))
+		fmt.Printf("[32m[*][0m nuclei fuzzy POC scan: %d target(s) x %d POC(s)...\n", len(targets), len(pocs))
+		p.runNucleiBatch(ctx, opts, targets)
+		return
+	} else {
+		targetPOCs := p.resolvePOCTargets(fpHits)
+		if len(targetPOCs) == 0 {
+			fmt.Println("[32m[*][0m nuclei precise: no fingerprint-matched POCs, skipping vuln scan")
+			return
+		}
+		p.runPreciseNuclei(ctx, opts, targetPOCs)
+		return
 	}
 
+	p.runNucleiBatch(ctx, opts, urls)
+}
+
+func (p *Pipeline) runPreciseNuclei(ctx context.Context, baseOpts nuclei.Options, targetPOCs map[string][]string) {
+	groups := groupTargetsByTemplates(targetPOCs)
+	fmt.Printf("[32m[*][0m nuclei precise scan: %d target group(s) across %d target(s)...\n", len(groups), len(targetPOCs))
+	for _, group := range groups {
+		opts := baseOpts
+		opts.Templates = group.templates
+		fmt.Printf("[32m[*][0m nuclei precise group: %d target(s) x %d POC(s)...\n", len(group.targets), len(group.templates))
+		p.runNucleiBatch(ctx, opts, group.targets)
+	}
+}
+
+func (p *Pipeline) runNucleiBatch(ctx context.Context, opts nuclei.Options, urls []string) int {
 	sc, err := nuclei.New(ctx, opts)
 	if err != nil {
 		fmt.Printf("[31m[!][0m nuclei init: %v\n", err)
-		return
+		return 0
 	}
 	defer sc.Close()
 
 	findings, errCh, err := sc.Scan(ctx, urls)
 	if err != nil {
 		fmt.Printf("[31m[!][0m nuclei scan: %v\n", err)
-		return
+		return 0
 	}
 
 	n := 0
 	for f := range findings {
+		if p.counts.SeenFinding(f) {
+			continue
+		}
 		fmt.Println(findingLine(f))
 		if werr := p.reporter.WriteFinding(f); werr != nil {
 			fmt.Printf("[31m[!][0m report: %v\n", werr)
@@ -867,25 +1049,304 @@ func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[stri
 		}
 	}
 	fmt.Printf("[32m[*][0m findings: %d\n", n)
+	return n
 }
 
 // resolvePOCs maps the fingerprint hits to the deduplicated set of POC files to
-// run, via configs/pocs/mapping.yaml + legacy/. Returns nil (skip scan) when no
-// product matched or the mapping can't be loaded.
+// run. Each mapped POC name resolves to the maintained nuclei-templates copy
+// first (works on nuclei v3), falling back to the frozen legacy/ file only when
+// upstream doesn't carry it. This is why `dddd update` benefits precise mode:
+// legacy templates with v2-deprecated syntax (e.g. req-condition) silently fail
+// to load on v3.8, so we prefer their upstream-maintained replacements.
+// Returns nil (skip scan) when no product matched or the mapping can't load.
 func (p *Pipeline) resolvePOCs(fpHits map[string][]string) []string {
+	return pocmap.Union(p.resolvePOCTargets(fpHits))
+}
+
+func (p *Pipeline) resolvePOCTargets(fpHits map[string][]string) map[string][]string {
 	if len(fpHits) == 0 {
 		return nil
 	}
-	m, err := pocmap.Load(filepath.Join(p.configDir, "pocs", "mapping.yaml"))
+	m, err := pocmap.Load(p.workflowYamlPath())
 	if err != nil {
 		fmt.Printf("[31m[!][0m pocmap: %v; skipping precise scan\n", err)
 		return nil
 	}
-	pocDir := filepath.Join(p.configDir, "pocs", "legacy")
-	resolved, stats := m.Resolve(fpHits, pocDir, !p.cfg.DisableGeneralPoc)
-	fmt.Printf("[32m[*][0m poc mapping: %d product hit(s) -> %d POC file(s) across %d target(s)\n",
-		stats.MatchedNames, stats.UniquePOCs, stats.Targets)
-	return pocmap.Union(resolved)
+	namesByTarget, stats := m.ResolveNamesByTarget(fpHits, !p.cfg.DisableGeneralPoc)
+	namesByTarget = filterTargetPOCNamesByQuery(namesByTarget, p.cfg.PocName)
+	if len(namesByTarget) == 0 {
+		return nil
+	}
+
+	idx := p.freshTemplateIndex()
+	legacyDir := p.legacyPOCDir()
+	resolved := make(map[string][]string, len(namesByTarget))
+	pathCache := make(map[string]string)
+	uniquePaths := make(map[string]struct{})
+	var fresh, legacy, missing int
+
+	resolvePath := func(name string) string {
+		if path, ok := pathCache[name]; ok {
+			return path
+		}
+		path := ""
+		if p, ok := idx[strings.ToLower(name)]; ok {
+			path = p
+			fresh++
+		} else {
+			lp := filepath.Join(legacyDir, name+".yaml")
+			if info, statErr := os.Stat(lp); statErr == nil && !info.IsDir() {
+				path = lp
+				legacy++
+			}
+		}
+		if path == "" {
+			missing++
+		}
+		pathCache[name] = path
+		return path
+	}
+
+	for target, names := range namesByTarget {
+		seen := make(map[string]struct{}, len(names))
+		for _, name := range names {
+			path := resolvePath(name)
+			if path == "" {
+				continue
+			}
+			if _, dup := seen[path]; dup {
+				continue
+			}
+			seen[path] = struct{}{}
+			resolved[target] = append(resolved[target], path)
+			uniquePaths[path] = struct{}{}
+		}
+		if len(resolved[target]) == 0 {
+			delete(resolved, target)
+			continue
+		}
+	}
+	resolved = deduplicateSessionRedirectPOCTargets(resolved)
+	if len(resolved) == 0 {
+		return nil
+	}
+
+	fmt.Printf("[32m[*][0m poc mapping: %d product hit(s) -> %d target(s) / %d unique POC(s) [%d updated, %d legacy, %d unavailable]\n",
+		stats.MatchedNames, len(resolved), len(uniquePaths), fresh, legacy, missing)
+	return resolved
+}
+
+func deduplicateSessionRedirectPOCTargets(targetPOCs map[string][]string) map[string][]string {
+	if len(targetPOCs) == 0 {
+		return targetPOCs
+	}
+	out := make(map[string][]string, len(targetPOCs))
+	sessionChildren := make(map[string]string)
+	for target, templates := range targetPOCs {
+		normalized, root, hadPathParams := normalizeSessionPOCTarget(target)
+		mergePOCTemplates(out, normalized, templates)
+		if hadPathParams && normalized != "" && root != "" && normalized != root {
+			sessionChildren[normalized] = root
+		}
+	}
+	for child, root := range sessionChildren {
+		if containsAllTemplates(out[root], out[child]) {
+			delete(out, child)
+		}
+	}
+	for target := range out {
+		sort.Strings(out[target])
+	}
+	return out
+}
+
+func normalizeSessionPOCTarget(raw string) (target, root string, hadPathParams bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return raw, "", false
+	}
+	root = u.Scheme + "://" + u.Host
+	hadPathParams = strings.Contains(u.Path, ";")
+	if !hadPathParams {
+		return raw, root, false
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = stripPathParams(u.Path)
+	return u.String(), root, true
+}
+
+func mergePOCTemplates(dst map[string][]string, target string, templates []string) {
+	if target == "" || len(templates) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(dst[target])+len(templates))
+	for _, existing := range dst[target] {
+		seen[existing] = struct{}{}
+	}
+	for _, tmpl := range templates {
+		if tmpl == "" {
+			continue
+		}
+		if _, ok := seen[tmpl]; ok {
+			continue
+		}
+		seen[tmpl] = struct{}{}
+		dst[target] = append(dst[target], tmpl)
+	}
+}
+
+func containsAllTemplates(haystack, needles []string) bool {
+	if len(needles) == 0 {
+		return true
+	}
+	if len(haystack) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(haystack))
+	for _, tmpl := range haystack {
+		seen[tmpl] = struct{}{}
+	}
+	for _, tmpl := range needles {
+		if _, ok := seen[tmpl]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *Pipeline) resolvePOCsByQuery(query string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+
+	type candidate struct {
+		base string
+		path string
+	}
+	var candidates []candidate
+	seenBases := make(map[string]struct{})
+
+	for base, path := range p.freshTemplateIndex() {
+		if !strings.Contains(base, query) {
+			continue
+		}
+		candidates = append(candidates, candidate{base: base, path: path})
+		seenBases[base] = struct{}{}
+	}
+
+	legacyDir := p.legacyPOCDir()
+	_ = filepath.WalkDir(legacyDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".yaml") {
+			return nil
+		}
+		base := strings.ToLower(strings.TrimSuffix(d.Name(), ".yaml"))
+		if !strings.Contains(base, query) {
+			return nil
+		}
+		if _, ok := seenBases[base]; ok {
+			return nil
+		}
+		candidates = append(candidates, candidate{base: base, path: path})
+		seenBases[base] = struct{}{}
+		return nil
+	})
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].base < candidates[j].base
+	})
+	out := make([]string, len(candidates))
+	for i, c := range candidates {
+		out[i] = c.path
+	}
+	return out
+}
+
+func directPOCTargets(urls []string) []string {
+	return dedup(stripPaths(urls))
+}
+
+type preciseNucleiGroup struct {
+	targets   []string
+	templates []string
+}
+
+func groupTargetsByTemplates(targetPOCs map[string][]string) []preciseNucleiGroup {
+	byKey := make(map[string]*preciseNucleiGroup)
+	for target, templates := range targetPOCs {
+		if target == "" || len(templates) == 0 {
+			continue
+		}
+		copied := append([]string(nil), templates...)
+		sort.Strings(copied)
+		key := strings.Join(copied, "\x00")
+		group := byKey[key]
+		if group == nil {
+			group = &preciseNucleiGroup{templates: copied}
+			byKey[key] = group
+		}
+		group.targets = append(group.targets, target)
+	}
+
+	out := make([]preciseNucleiGroup, 0, len(byKey))
+	for _, group := range byKey {
+		sort.Strings(group.targets)
+		out = append(out, *group)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.Join(out[i].templates, "\x00") < strings.Join(out[j].templates, "\x00")
+	})
+	return out
+}
+
+func filterTargetPOCNamesByQuery(targetNames map[string][]string, query string) map[string][]string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return targetNames
+	}
+	out := make(map[string][]string, len(targetNames))
+	for target, names := range targetNames {
+		filtered := filterPOCNamesByQuery(names, query)
+		if len(filtered) == 0 {
+			continue
+		}
+		out[target] = filtered
+	}
+	return out
+}
+
+// freshTemplateIndex lazily builds a basename->path index of the updated
+// nuclei-templates dir (the one `dddd update` maintains). Returns an empty map
+// when that dir is absent, so precise mode degrades to legacy-only. Built once
+// and cached; the walk only stats directory entries, not file contents.
+func (p *Pipeline) freshTemplateIndex() map[string]string {
+	if p.freshIdxBuilt {
+		return p.freshIdx
+	}
+	p.freshIdxBuilt = true
+	idx := make(map[string]string)
+	p.freshIdx = idx
+
+	dir := p.nucleiTemplateDir()
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return idx
+	}
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, ".yaml") {
+			return nil
+		}
+		base := strings.ToLower(strings.TrimSuffix(name, ".yaml"))
+		if _, exists := idx[base]; !exists { // first match wins; http/ is walked early
+			idx[base] = path
+		}
+		return nil
+	})
+	return idx
 }
 
 func buildReporter(cfg config.Config) (reporter.Reporter, error) {
@@ -960,7 +1421,7 @@ var httpProbePorts = map[int]struct{}{
 	7001: {}, 7070: {}, 7443: {}, 7777: {}, 8000: {}, 8001: {},
 	8008: {}, 8043: {}, 8080: {}, 8081: {}, 8088: {}, 8089: {}, 8090: {},
 	8180: {}, 8443: {}, 8448: {}, 8888: {}, 9000: {}, 9001: {}, 9043: {},
-	9060: {}, 9080: {}, 9090: {}, 9200: {}, 9443: {}, 9999: {}, 10000: {},
+	8848: {}, 9060: {}, 9080: {}, 9090: {}, 9200: {}, 9443: {}, 9999: {}, 10000: {},
 	18080: {},
 }
 
@@ -977,6 +1438,17 @@ func shouldHTTPProbe(port int, key string, services map[string]string) bool {
 	}
 	_, ok := httpProbePorts[port]
 	return ok
+}
+
+func webProbeInputs(openPorts []portscan.Result, services map[string]string) []string {
+	var out []string
+	for _, r := range openPorts {
+		key := fmt.Sprintf("%s:%d", r.Host, r.Port)
+		if shouldHTTPProbe(r.Port, key, services) {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 func (p *Pipeline) filterByPortThreshold(results []portscan.Result) []portscan.Result {
@@ -1155,7 +1627,12 @@ func (p *Pipeline) runLowPerception(ctx context.Context, queries []string) error
 		return nil
 	}
 
-	client, err := hunter.New(hunter.Options{APIKey: os.Getenv("HUNTER_API_KEY"), Proxy: p.cfg.ProxyURL})
+	client, err := hunter.New(hunter.Options{
+		APIKey:   os.Getenv("HUNTER_API_KEY"),
+		PageSize: p.cfg.HunterPageSize,
+		MaxPages: p.cfg.HunterMaxPages,
+		Proxy:    p.cfg.ProxyURL,
+	})
 	if err != nil {
 		return fmt.Errorf("app: low-perception: %w", err)
 	}
@@ -1205,12 +1682,14 @@ func (p *Pipeline) runLowPerception(ctx context.Context, queries []string) error
 	liveURLs = dedup(liveURLs)
 	fmt.Printf("\x1b[32m[*]\x1b[0m low-perception: %d web root(s), %d service(s) — no packet sent to targets\n", len(liveURLs), len(openPorts))
 
-	if len(openPorts) > 0 && !p.cfg.NoBrute {
+	if len(openPorts) > 0 && shouldRunGoPocs(p.cfg) {
 		p.bruteForce(ctx, openPorts, services)
 	}
 	if len(liveURLs) > 0 && !p.cfg.NoPoc {
 		p.runNuclei(ctx, liveURLs, fpHits)
-		p.shiroScan(ctx, liveURLs)
+		if shouldRunShiro(p.cfg) {
+			p.shiroScan(ctx, liveURLs)
+		}
 	}
 	return nil
 }
@@ -1220,4 +1699,26 @@ func webScheme(proto string) string {
 		return "https"
 	}
 	return "http"
+}
+
+func configuredPath(custom, fallback string) string {
+	if strings.TrimSpace(custom) != "" {
+		return custom
+	}
+	return fallback
+}
+
+func (p *Pipeline) nucleiTemplateDir() string {
+	return configuredPath(p.cfg.NucleiTemplateDir, filepath.Join(p.configDir, "nuclei-templates"))
+}
+
+func (p *Pipeline) workflowYamlPath() string {
+	return configuredPath(p.cfg.WorkflowYamlPath, filepath.Join(p.configDir, "pocs", "mapping.yaml"))
+}
+
+func (p *Pipeline) legacyPOCDir() string {
+	if strings.TrimSpace(p.cfg.NucleiTemplateDir) != "" {
+		return p.cfg.NucleiTemplateDir
+	}
+	return filepath.Join(p.configDir, "pocs", "legacy")
 }

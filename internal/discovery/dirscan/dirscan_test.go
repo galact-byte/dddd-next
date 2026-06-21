@@ -30,3 +30,16 @@ func TestLoadAndPaths(t *testing.T) {
 		t.Errorf("paths not sorted: %v", got)
 	}
 }
+
+func TestDefaultDirYAMLIncludesWebGoatLogin(t *testing.T) {
+	db, err := Load("../../../configs/dir.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range db.Paths() {
+		if path == "/WebGoat/login" {
+			return
+		}
+	}
+	t.Fatal("default dir.yaml should probe /WebGoat/login")
+}

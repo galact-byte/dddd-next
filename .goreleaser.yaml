@@ -1,0 +1,70 @@
+version: 2
+
+project_name: dddd-next
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: dddd
+    main: ./cmd/dddd
+    binary: dddd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: dddd
+    ids:
+      - dddd
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - .env.example
+      - configs/api-config.example.yaml
+      - configs/dir.yaml
+      - configs/dict/**
+      - configs/fingers/**
+      - configs/pocs/**
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: galact-byte
+    name: dddd-next
+  prerelease: auto

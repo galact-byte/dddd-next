@@ -95,6 +95,44 @@ func TestHTMLReporter(t *testing.T) {
 	}
 }
 
+func TestHTMLReporterInteractiveLayout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "report.html")
+	r := NewHTML(path)
+	if err := r.WriteFingerprint("http://example.com", types.Fingerprint{Name: "Apache", Source: "active", Confidence: 90}); err != nil {
+		t.Fatalf("WriteFingerprint: %v", err)
+	}
+	f := sampleFinding()
+	f.Request = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+	f.Response = "HTTP/1.1 200 OK\r\nServer: test\r\n\r\nbody"
+	if err := r.WriteFinding(f); err != nil {
+		t.Fatalf("WriteFinding: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	s := string(data)
+	for _, want := range []string{
+		`class="report-shell"`,
+		`data-filter="critical"`,
+		`data-filter="high"`,
+		`data-severity="high"`,
+		`class="finding-card finding-high"`,
+		`copyText('request-1')`,
+		`copyText('response-1')`,
+		`指纹资产`,
+		`漏洞清单`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("interactive report missing %q (len=%d)", want, len(s))
+		}
+	}
+}
+
 func TestMultiReporter(t *testing.T) {
 	var txtBuf, jsonBuf bytes.Buffer
 	multi := NewMulti(NewTextWriter(&txtBuf), NewJSONWriter(&jsonBuf))

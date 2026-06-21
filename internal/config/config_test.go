@@ -30,6 +30,9 @@ func TestParseArgsDefaults(t *testing.T) {
 	if cfg.OutputType != "text" {
 		t.Errorf("OutputType default = %q", cfg.OutputType)
 	}
+	if cfg.HTMLOutput != "report.html" {
+		t.Errorf("HTMLOutput default = %q", cfg.HTMLOutput)
+	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel default = %q", cfg.LogLevel)
 	}
@@ -161,6 +164,135 @@ func TestParseArgsNewFlags(t *testing.T) {
 	}
 	if !cfg.NoPoc {
 		t.Error("NoPoc = false, want true")
+	}
+}
+
+func TestParseArgsLegacyAliases(t *testing.T) {
+	cfg, err := ParseArgs([]string{
+		"dddd", "-t", "1.1.1.1",
+		"-npoc", "-nb", "-dgp", "-nd",
+		"-s", "critical,high",
+		"-et", "dos,xss",
+		"-poc-name", "29441",
+		"-no-golang-poc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.NoPoc || !cfg.NoBrute || !cfg.DisableGeneralPoc || !cfg.SkipDir || !cfg.NoGoPoc {
+		t.Fatalf("legacy bool aliases not applied: %+v", cfg)
+	}
+	if len(cfg.Severity) != 1 || cfg.Severity[0] != "critical,high" {
+		t.Fatalf("Severity = %v, want [critical,high]", cfg.Severity)
+	}
+	if len(cfg.ExcludeTags) != 1 || cfg.ExcludeTags[0] != "dos,xss" {
+		t.Fatalf("ExcludeTags = %v, want [dos,xss]", cfg.ExcludeTags)
+	}
+	if cfg.PocName != "29441" {
+		t.Fatalf("PocName = %q, want 29441", cfg.PocName)
+	}
+}
+
+func TestParseArgsOriginalCompatibilityFlags(t *testing.T) {
+	dir := t.TempDir()
+	credsFile := filepath.Join(dir, "creds.txt")
+	if err := os.WriteFile(credsFile, []byte("admin:admin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ParseArgs([]string{
+		"dddd",
+		"-target", "1.1.1.1",
+		"-port", "80,443",
+		"-no-port", "22",
+		"-ports-max-count", "9",
+		"-scan-type", "tcp",
+		"-tcp-scan-threads", "11",
+		"-syn-scan-threads", "12",
+		"-port-scan-timeout", "7",
+		"-tcp-ping",
+		"-Pn",
+		"-no-icmp-ping",
+		"-subdomain",
+		"-no-subdomain-brute",
+		"-no-subfinder",
+		"-subdomain-brute-threads", "13",
+		"-local-domain",
+		"-allow-cdn",
+		"-no-host-bind",
+		"-web-threads", "14",
+		"-web-timeout", "15",
+		"-proxy-test",
+		"-proxy-test-url", "http://proxy.test",
+		"-output", "out.txt",
+		"-output-type", "json",
+		"-html-output", "report.html",
+		"-disable-general-poc",
+		"-exclude-tags", "dos,xss",
+		"-severity", "critical,high",
+		"-no-interactsh",
+		"-interactsh-server", "http://is.example",
+		"-interactsh-token", "tok",
+		"-api-config-file", "api.yaml",
+		"-nuclei-template", "custom-pocs",
+		"-workflow-yaml", "workflow.yaml",
+		"-finger-yaml", "finger.yaml",
+		"-dir-yaml", "dir.yaml",
+		"-subdomain-word-list", "subs.txt",
+		"-username-password", "root:toor",
+		"-username-password-file", credsFile,
+		"-audit-log-filename", "audit2.log",
+		"-fofa",
+		"-fofa-max-count", "25",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.Targets) != 1 || cfg.Targets[0] != "1.1.1.1" {
+		t.Fatalf("Targets = %v, want [1.1.1.1]", cfg.Targets)
+	}
+	if cfg.Ports != "80,443" || cfg.ExcludePorts != "22" || cfg.PortsThreshold != 9 {
+		t.Fatalf("port flags not applied: %+v", cfg)
+	}
+	if cfg.ScanType != "tcp" || cfg.TCPPortScanThreads != 11 || cfg.SYNScanRate != 12 || cfg.PortScanTimeout != 7 {
+		t.Fatalf("scan tuning flags not applied: %+v", cfg)
+	}
+	if !cfg.TCPPing || !cfg.SkipHostDiscovery || !cfg.NoICMPPing {
+		t.Fatalf("host discovery flags not applied: %+v", cfg)
+	}
+	if !cfg.Subdomain || !cfg.NoSubBrute || !cfg.NoPassiveSubfinder || cfg.SubdomainBruteThreads != 13 {
+		t.Fatalf("subdomain flags not applied: %+v", cfg)
+	}
+	if !cfg.AllowLocalAreaDomain || !cfg.AllowCDN || !cfg.NoHostBind {
+		t.Fatalf("asset control flags not applied: %+v", cfg)
+	}
+	if cfg.WebThreads != 14 || cfg.WebTimeout != 15 {
+		t.Fatalf("web tuning flags not applied: %+v", cfg)
+	}
+	if !cfg.ProxyTest || cfg.ProxyTestURL != "http://proxy.test" {
+		t.Fatalf("proxy test flags not applied: %+v", cfg)
+	}
+	if cfg.Output != "out.txt" || cfg.OutputType != "json" || cfg.HTMLOutput != "report.html" {
+		t.Fatalf("output flags not applied: %+v", cfg)
+	}
+	if !cfg.DisableGeneralPoc || len(cfg.ExcludeTags) != 1 || cfg.ExcludeTags[0] != "dos,xss" || len(cfg.Severity) != 1 || cfg.Severity[0] != "critical,high" {
+		t.Fatalf("poc filter flags not applied: %+v", cfg)
+	}
+	if !cfg.NoInteractsh || cfg.InteractshServer != "http://is.example" || cfg.InteractshToken != "tok" {
+		t.Fatalf("interactsh flags not applied: %+v", cfg)
+	}
+	if cfg.APIConfigFilePath != "api.yaml" || cfg.NucleiTemplateDir != "custom-pocs" || cfg.WorkflowYamlPath != "workflow.yaml" || cfg.FingerConfigFilePath != "finger.yaml" || cfg.DirSearchYaml != "dir.yaml" || cfg.SubdomainWordListFile != "subs.txt" {
+		t.Fatalf("config path flags not applied: %+v", cfg)
+	}
+	if len(cfg.CustomCreds) != 2 || cfg.CustomCreds[0] != "root:toor" || cfg.CustomCreds[1] != "admin:admin" {
+		t.Fatalf("custom creds = %v, want [root:toor admin:admin]", cfg.CustomCreds)
+	}
+	if cfg.AuditLogFile != "audit2.log" {
+		t.Fatalf("AuditLogFile = %q, want audit2.log", cfg.AuditLogFile)
+	}
+	if len(cfg.ReconAgents) != 1 || cfg.ReconAgents[0] != "fofa" || cfg.ReconLimit != 25 {
+		t.Fatalf("recon compatibility flags not applied: %+v", cfg)
 	}
 }
 

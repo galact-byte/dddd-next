@@ -41,3 +41,5 @@ Tomcat-Login:
   - "/manager/html"
 Jenkins:
   - "/jenkins/login"
+WebGoat:
+  - "/WebGoat/login"

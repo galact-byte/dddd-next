@@ -2,6 +2,9 @@
 
 > **修订记录**
 >
+> - v0.1.42-dev: **全端口生产入口复验 + session 跳转 POC 目标去重**——用靶场 VM 复跑常用命令 `dddd.exe -t <target-ip> -p 1-65535 -ho ''`，确认同一轮能发现 Web 与非 Web 服务：DVWA 默认登录、Tomcat Manager、Shiro weak key、Redis/MySQL 弱口令、宿主机 Apache/PHP 指纹等；修复 Shiro 302 到 `/login;jsessionid=...` 后精准 nuclei `shiro-detect` 在根路径和 session 路径重复输出的问题，新增回归测试，复验 `-p 8080` 只输出 1 条 `shiro-detect` + 1 条 `shiro-weak-key`；`go test ./...`、`go vet ./...`、`go build -o .\dddd.exe ./cmd/dddd` 全绿
+> - v0.1.41-dev: **端口扫描超时重试 + shiro 密钥显示**——`dialOpen` 此前单次连接零重试，慢 accept 的服务(如正在启动的 Nacos:8848 Java 应用)一次超时即误判端口关闭→整条 nacos 链不触发；改为**仅超时才重试一次**(被拒绝/不可达立即判关，不拖慢全 65535 扫描)。shiro 爆破命中后此前只打 URL 不显示密钥(密钥本就在 `Finding.Description` 里)，现补打 `key "kPH+..." (cbc)`——爆破 shiro 的全部意义就是拿到那把密钥；build+vet+portscan/app 测试全绿
+> - v0.1.40-precise-fresh: **修复"`dddd update` 对核心路径无效"的架构缺陷**——精准模式(默认)此前只读 `configs/pocs/legacy/` 的 2021 冻结模板，与 `dddd update` 维护的最新 `nuclei-templates/` 完全隔离(只有 `-full` 用最新)，导致带 v2 废弃语法(`req-condition` 等)的老模板在 nuclei v3.8 静默解析失败→POC 成片漏报(CVE-2021-29441 同款病，legacy 仅 `req-condition` 一行之差就是真凶；实测 legacy 92 个带此语法、66 个有最新顶替)。改为 `resolvePOCs` 优先按 basename 命中最新模板库、legacy 仅兜底 upstream 没有的自定义/CNVD POC，并打印 `[N updated, M legacy, K unavailable]` 把此前被吞的丢失显式化；新增 `pocmap.ResolveNames` + `Pipeline.freshTemplateIndex`(懒建缓存、缺库优雅退化为 legacy-only)；2 新测全绿，全量回归全绿
 > - v0.1.0-init: 项目骨架建立，基于 dddd 原项目重写计划启动
 > - v0.1.1-foundation: 数据资产迁移完成；输入分类器 + 配置加载模块上线（31 测试全绿）
 > - v0.1.2-engine: 指纹 DSL 引擎、报告生成（TXT/JSON/HTML）、审计日志全部上线（74 测试全绿，DSL 实战 lint 99.96%）
