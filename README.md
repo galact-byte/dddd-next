@@ -1,14 +1,14 @@
 # dddd-next
 
-> 面向授权环境的自动化资产测绘 + 漏洞扫描工具，对原 dddd 做全功能复刻和全栈升级，覆盖指纹识别、弱口令、nuclei POC、Shiro 专项检测和 HTML 报告。
+> 面向授权环境的自动化资产测绘 + 漏洞扫描工具，基于原 dddd 的设计思路做现代化重写，覆盖指纹识别、弱口令、nuclei POC、Shiro 专项检测和 HTML 报告。
 
 ## 项目定位
 
 `dddd-next` 是对原 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 项目的现代化重写。原项目自 2024 年后基本停更，但其依赖的 `nuclei`、`httpx`、`subfinder` 等仍在快速迭代，内置 POC 也已老化。本项目在保留 dddd 设计哲学的基础上，采用现代 Go 标准结构重构，依赖直接跟随 projectdiscovery 主线版本。
 
-> **当前状态**：**全功能复刻 + 全栈升级已达成**——recon 覆盖能力 100%（gopocs 18/18 + 被动指纹 + ICMP + CDN + 产品路径 + 自定义端口 / 全端口 + 子域名爆破 + OOB 盲打）、控制开关 100%（nuclei 过滤 + 阶段跳过 + 自定义凭据）。真实靶场已覆盖 Nacos、DVWA、Tomcat、Shiro、Redis、MySQL、Pikachu、sqli-labs、Vulfocus、WebGoat，并复验 `-t <ip> -p 1-65535` 常用全端口入口。剩余差异主要是性能加速项（masscan 类加速）；功能发现链路已经对齐原版。
+> **当前状态**：核心扫描链路已可用，并经过 Nacos、DVWA、Tomcat、Shiro、Redis、MySQL、Pikachu、sqli-labs、Vulfocus、WebGoat 等靶场回归；常用 `-t <ip> -p 1-65535` 全端口入口已复验。已知差异主要是 masscan 类超大网段加速和部分真实环境下模板兼容性需要持续回归。
 
-## 与原项目的差异（全栈升级）
+## 与原项目的差异
 
 | 维度 | 原 dddd | dddd-next |
 |:---|:---|:---|
@@ -40,20 +40,20 @@
 - Hunter / Fofa / Quake 测绘 API（`.env` 管理密钥）
 - TXT / JSON / HTML 三种报告 + 审计日志；HTML 报告已重做为高密度暗色布局，支持严重度筛选、漏洞详情展开、请求 / 响应复制和指纹资产区
 
-## 对齐原版的状态（Roadmap）
+## 兼容状态与已知差异
 
-**全功能复刻 + 全栈升级已达成**：
+已对齐或补齐的主链路：
 
-- **gopocs 协议**：原版 18 种已全覆盖（弱口令 11 + 探测型 6 + shiro 专用爆破；含 RPC Endpoint Mapper 信息泄露）
-- **recon 覆盖能力 100%**：被动指纹 / ICMP 存活 / CDN 识别 / 产品路径二次指纹 / 自定义端口 / 主动子域名爆破均已补齐；OOB 盲打（interactsh）默认启用
-- **控制开关 100%**：nuclei 过滤（`-severity`/`-tags`/`-exclude-*`）、阶段跳过（`-no-brute`/`-no-poc`）、自定义凭据（`-up`/`-upf`）
+- **gopocs 协议**：弱口令、探测型检测和 Shiro 专项爆破均已实现，含 RPC Endpoint Mapper 信息泄露。
+- **recon 覆盖能力**：被动指纹、ICMP 存活、CDN 识别、产品路径二次指纹、自定义端口、全端口、主动子域名爆破和 OOB 盲打均已接入。
+- **控制开关**：支持 nuclei 过滤（`-severity`/`-tags`/`-exclude-*`）、阶段跳过（`-no-brute`/`-no-poc`）和自定义凭据（`-up`/`-upf`）。
+- **真实回归**：近期覆盖 Nacos、DVWA、Tomcat、Shiro、Redis、MySQL、Pikachu、sqli-labs、Vulfocus、WebGoat，并复验 `-t <ip> -p 1-65535` 入口。
 
-**剩余主要是性能加速 / 环境增强项（不影响"能发现什么"）**：
+仍需持续关注：
 
-- masscan 类超大网段快速扫描（当前 TCP connect 为默认；`-st syn` 可用但依赖 npcap / 管理员权限）
-- 自定义 interactsh 服务器（当前用官方公共服务，OOB 盲打已启用）
-
-> 诚实说明：经逐项核对原版 55 个 flag 与主流程，**会影响"能发现什么"的覆盖能力已全部复刻**，控制开关也已补齐。剩余差异主要为性能加速和部署环境增强（不影响发现能力，只影响速度或运维方式）。**dddd-next 真正达成「全功能复刻 + 全栈升级」**，工程质量（依赖 / 结构 / 测试 / 多项 bug 修复）已超越原版。
+- masscan 类超大网段快速扫描（当前 TCP connect 为默认；`-st syn` 可用但依赖 npcap / 管理员权限）。
+- nuclei 官方模板持续变化，个别 CVE 是否命中仍取决于模板兼容性、产品指纹和目标环境条件。
+- 生产环境使用前建议先用授权靶标或小范围资产做回归确认。
 
 ## 项目结构
 
@@ -83,13 +83,22 @@ dddd-next/
 ├── pkg/
 │   └── fingerdsl/               # 指纹表达式 DSL（可独立复用）
 ├── configs/
-│   ├── fingers/                 # 指纹库 finger.yaml
+│   ├── fingers/                 # 指纹库 finger.yaml（会编译进单文件二进制）
 │   ├── pocs/                    # mapping.yaml（指纹→POC）+ legacy POC 库
 │   └── dict/                    # 弱口令字典
 └── .env.example                 # 测绘 API 密钥模板（复制为 .env 填入）
 ```
 
 ## 快速开始
+
+Release 版是单文件二进制，不需要手动携带 `configs/` 目录。首次运行时，如果程序同目录和当前工作目录都没有外部 `configs/`，会把内置基础配置释放到用户下载目录：
+
+```text
+Windows: %USERPROFILE%\Downloads\dddd-next\configs
+Linux:   ~/Downloads/dddd-next/configs
+```
+
+如果需要自定义指纹、字典或 legacy POC，把 `configs/` 放到 exe 同目录即可；同目录外部配置优先级最高。下载目录中的内置副本可能随版本刷新覆盖，不建议直接当作长期自定义配置目录。`dddd update` 会把最新 `nuclei-templates` 拉取到当前实际使用的配置目录。
 
 ```bash
 # 构建
@@ -163,9 +172,11 @@ export HTTPS_PROXY=http://127.0.0.1:7890
 本仓库使用 GitHub Actions + GoReleaser 发布版本。推送 `v*` tag 后会自动：
 
 1. 运行 `go test ./...`。
-2. 构建 Windows / Linux / macOS 的 amd64、arm64 二进制。
-3. 将二进制、`configs/`、README、LICENSE、`.env.example` 打包。
+2. 构建 Windows amd64、Linux amd64、Linux arm64 二进制。
+3. 上传单文件 Release 资产，不再额外上传 `configs/` 压缩包。
 4. 生成 `checksums.txt` 并创建 GitHub Release。
+
+GitHub 会自动显示 Source code 的 zip / tar.gz，这是平台默认产物；项目自身上传的资产保持单文件。
 
 发布命令示例：
 
@@ -185,7 +196,7 @@ goreleaser release --snapshot --clean
 GitHub 右上角 About 建议填写：
 
 ```text
-全功能复刻并全栈升级原 dddd 的自动化资产测绘与漏洞扫描工具，支持全端口、指纹、弱口令、nuclei POC 和 HTML 报告。
+基于 SleepingBag945/dddd 设计思路的现代化重写，跟随 projectdiscovery 主线依赖。
 ```
 
 ## 致谢

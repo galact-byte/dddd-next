@@ -12,6 +12,8 @@ builds:
     binary: dddd
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
     goos:
       - windows
       - linux
@@ -23,6 +25,7 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
+      - -buildid=
       - -X main.appVersion={{ .Version }}
 
 archives:
@@ -30,25 +33,12 @@ archives:
     ids:
       - dddd
     formats:
-      - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
+      - binary
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    files:
-      - README.md
-      - LICENSE
-      - .env.example
-      - configs/api-config.example.yaml
-      - configs/dir.yaml
-      - configs/dict/**
-      - configs/fingers/**
-      - configs/pocs/**
 
 checksum:
   name_template: checksums.txt

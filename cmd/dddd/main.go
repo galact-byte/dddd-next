@@ -237,6 +237,12 @@ Recon (search-query targets):
   .env file next to the binary (copy .env.example): FOFA_EMAIL + FOFA_KEY,
   HUNTER_API_KEY, QUAKE_TOKEN. Free FOFA accounts have no API quota.
 
+Configs:
+  Release binaries include baseline configs. If no configs/ exists next to the
+  binary or in the working directory, dddd-next writes them to
+  ~/Downloads/dddd-next/configs and uses that directory. Put configs/ next to
+  the binary to override or customize them.
+
 Vulnerability scan (nuclei):
   Default precise mode runs only the POCs a target's fingerprints map to
   (configs/pocs/mapping.yaml) plus a general POC set — not all 13000+ templates.
@@ -275,18 +281,6 @@ func runUpdate(args []string) int {
 		}
 	}
 	return 0
-}
-
-// resolveConfigDir picks `configs/` next to the binary, falling back to
-// `./configs` relative to the current working directory.
-func resolveConfigDir() string {
-	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), "configs")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
-		}
-	}
-	return "configs"
 }
 
 // loadDotEnv pulls local secrets (recon API keys) from a .env file next to the
