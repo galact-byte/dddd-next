@@ -3,10 +3,21 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"dddd-next/internal/config"
 )
+
+func TestVersionLineUsesMutableAppVersion(t *testing.T) {
+	orig := appVersion
+	appVersion = "test-version"
+	t.Cleanup(func() { appVersion = orig })
+
+	if got := strings.TrimSpace(versionLine()); got != "dddd-next test-version" {
+		t.Fatalf("versionLine() = %q", got)
+	}
+}
 
 func TestPrepareOutputPathsRespectsHTMLDisable(t *testing.T) {
 	cfg := config.Config{Output: "result.txt", HTMLOutput: ""}
