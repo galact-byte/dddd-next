@@ -135,3 +135,14 @@ func TestFilterPOCNamesByFuzzyName(t *testing.T) {
 		t.Fatalf("case-insensitive filter = %v", got)
 	}
 }
+
+func TestFilterPOCNamesByCommaSeparatedQueries(t *testing.T) {
+	names := []string{"nacos-default-token", "CVE-2021-29441", "springboot-env", "shiro-detect"}
+
+	got := filterPOCNamesByQuery(names, "29441, shiro")
+
+	want := []string{"CVE-2021-29441", "shiro-detect"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("comma-separated filter = %v, want %v", got, want)
+	}
+}

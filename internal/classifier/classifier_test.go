@@ -103,6 +103,12 @@ func TestClassifyResumeFormats(t *testing.T) {
 	if got := Classify("[FP] http://1.2.3.4:8080 | Nacos | confidence=90"); got != types.InputFingerImport {
 		t.Errorf("[FP] line: got %s, want finger-import", got)
 	}
+	if got := Classify("[+] WebTitle https://10.241.152.52:8443 code:200 len:24323 title:Welcome to C-Lodop"); got != types.InputURL {
+		t.Errorf("fscan WebTitle line: got %s, want url", got)
+	}
+	if got := Classify("InfoScan https://10.241.152.52:8443 [打印机 C-Lodop打印服务系统]"); got != types.InputURL {
+		t.Errorf("fscan InfoScan line: got %s, want url", got)
+	}
 }
 
 func TestParseFscanOpen(t *testing.T) {
@@ -128,5 +134,25 @@ func TestParseFingerImport(t *testing.T) {
 	}
 	if len(tgt.Fingers) != 1 || tgt.Fingers[0] != "Nacos" {
 		t.Errorf("Fingers = %v", tgt.Fingers)
+	}
+}
+
+func TestParseFscanWebURLLines(t *testing.T) {
+	for _, in := range []string{
+		"[+] WebTitle https://10.241.152.52:8443 code:200 len:24323 title:Welcome to C-Lodop",
+		"InfoScan https://10.241.152.52:8443 [打印机 C-Lodop打印服务系统]",
+	} {
+		t.Run(in, func(t *testing.T) {
+			tgt, err := Parse(in)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if tgt.Type != types.InputURL {
+				t.Fatalf("Type = %s, want url", tgt.Type)
+			}
+			if tgt.URL != "https://10.241.152.52:8443" || tgt.Host != "10.241.152.52" || tgt.Port != 8443 {
+				t.Fatalf("target = %+v, want extracted https URL", tgt)
+			}
+		})
 	}
 }

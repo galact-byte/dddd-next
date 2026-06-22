@@ -140,6 +140,29 @@ func TestResolvePOCsByQueryDoesNotRequireFingerprintMapping(t *testing.T) {
 	}
 }
 
+func TestResolvePOCsByQueryAcceptsCommaSeparatedQueries(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "nuclei-templates", "http")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nacos := filepath.Join(nested, "nacos-default-token.yaml")
+	shiro := filepath.Join(nested, "shiro-detect.yaml")
+	for _, path := range []string{nacos, shiro} {
+		if err := os.WriteFile(path, []byte("id: test\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := &Pipeline{configDir: dir}
+	got := p.resolvePOCsByQuery("nacos, shiro")
+
+	want := []string{nacos, shiro}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolvePOCsByQuery multi = %v, want %v", got, want)
+	}
+}
+
 func TestDirectPOCTargetsUseWebRoots(t *testing.T) {
 	got := directPOCTargets([]string{
 		"http://nacos.local:8848",

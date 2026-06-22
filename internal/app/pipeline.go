@@ -1216,8 +1216,8 @@ func containsAllTemplates(haystack, needles []string) bool {
 }
 
 func (p *Pipeline) resolvePOCsByQuery(query string) []string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
+	terms := pocQueryTerms(query)
+	if len(terms) == 0 {
 		return nil
 	}
 
@@ -1229,7 +1229,7 @@ func (p *Pipeline) resolvePOCsByQuery(query string) []string {
 	seenBases := make(map[string]struct{})
 
 	for base, path := range p.freshTemplateIndex() {
-		if !strings.Contains(base, query) {
+		if !pocNameMatchesAny(base, terms) {
 			continue
 		}
 		candidates = append(candidates, candidate{base: base, path: path})
@@ -1242,7 +1242,7 @@ func (p *Pipeline) resolvePOCsByQuery(query string) []string {
 			return nil
 		}
 		base := strings.ToLower(strings.TrimSuffix(d.Name(), ".yaml"))
-		if !strings.Contains(base, query) {
+		if !pocNameMatchesAny(base, terms) {
 			return nil
 		}
 		if _, ok := seenBases[base]; ok {

@@ -154,10 +154,28 @@ func Parse(input string) (types.Target, error) {
 // line like "192.168.1.1:80 open" classifies as an ip:port target.
 func normalize(input string) string {
 	s := strings.TrimSpace(input)
+	if url := extractFscanWebURL(s); url != "" {
+		return url
+	}
 	if strings.HasSuffix(strings.ToLower(s), " open") {
 		s = strings.TrimSpace(s[:len(s)-len(" open")])
 	}
 	return s
+}
+
+func extractFscanWebURL(s string) string {
+	lower := strings.ToLower(s)
+	if !strings.Contains(lower, "webtitle") && !strings.Contains(lower, "infoscan") {
+		return ""
+	}
+	for _, field := range strings.Fields(s) {
+		field = strings.Trim(field, `"'()[]<>`)
+		field = strings.TrimRight(field, ",;")
+		if strings.HasPrefix(field, "http://") || strings.HasPrefix(field, "https://") {
+			return field
+		}
+	}
+	return ""
 }
 
 // parseFPLine reads a re-imported fingerprint line in dddd-next's report format:
