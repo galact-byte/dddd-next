@@ -2,6 +2,7 @@
 
 > **修订记录**
 >
+> - v0.1.44-dev: **修复 v0.1.43 Release CI 测试失败**——失败根因是 Windows `core.autocrlf=true` 下生成的 `configs/bundle.zip` 带 CRLF，而 GitHub Actions Linux checkout 后基准配置为 LF，导致 `TestBundleZipMatchesBaselineConfigFiles` 报 `bundle file ... is stale`；重新以 LF 工作区内容生成内置配置包，并新增 `.gitattributes` 固定文本/二进制换行规则；`go test ./...` 与 `goreleaser check` 通过
 > - v0.1.43-dev: **单文件 Release + 内置基础配置**——Release 资产改为 GoReleaser `binary` 单文件，不再上传项目 zip/tar 和随包 `configs/`；基础配置、指纹、字典、legacy POC 以 `configs/bundle.zip` 编译进二进制，运行时优先读取 exe 同目录 `configs/`，否则读取当前目录 `configs/`，都不存在时释放到用户 `Downloads/dddd-next/configs`；README 降低宣传性措辞，仅保留使用者需要的单文件运行和 Downloads 释放路径说明，移除维护者发布说明；确认不使用 UPX，降低相对原版加壳产物的误报概率；`go test ./...`、`goreleaser check`、裸 exe 无外部 configs 烟测均通过
 > - v0.1.42-dev: **全端口生产入口复验 + session 跳转 POC 目标去重**——用靶场 VM 复跑常用命令 `dddd.exe -t <target-ip> -p 1-65535 -ho ''`，确认同一轮能发现 Web 与非 Web 服务：DVWA 默认登录、Tomcat Manager、Shiro weak key、Redis/MySQL 弱口令、宿主机 Apache/PHP 指纹等；修复 Shiro 302 到 `/login;jsessionid=...` 后精准 nuclei `shiro-detect` 在根路径和 session 路径重复输出的问题，新增回归测试，复验 `-p 8080` 只输出 1 条 `shiro-detect` + 1 条 `shiro-weak-key`；`go test ./...`、`go vet ./...`、`go build -o .\dddd.exe ./cmd/dddd` 全绿
 > - v0.1.41-dev: **端口扫描超时重试 + shiro 密钥显示**——`dialOpen` 此前单次连接零重试，慢 accept 的服务(如正在启动的 Nacos:8848 Java 应用)一次超时即误判端口关闭→整条 nacos 链不触发；改为**仅超时才重试一次**(被拒绝/不可达立即判关，不拖慢全 65535 扫描)。shiro 爆破命中后此前只打 URL 不显示密钥(密钥本就在 `Finding.Description` 里)，现补打 `key "kPH+..." (cbc)`——爆破 shiro 的全部意义就是拿到那把密钥；build+vet+portscan/app 测试全绿
