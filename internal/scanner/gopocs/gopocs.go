@@ -167,6 +167,7 @@ func (e *Engine) Run(ctx context.Context, endpoints []Endpoint) <-chan types.Fin
 			go func(j job, creds []Credential) {
 				defer wg.Done()
 				defer func() { <-sem }()
+				defer recoverEndpointPanic(j)
 				e.handleEndpoint(ctx, j, creds, timeout, out)
 			}(j, creds)
 		}
@@ -174,6 +175,12 @@ func (e *Engine) Run(ctx context.Context, endpoints []Endpoint) <-chan types.Fin
 	}()
 
 	return out
+}
+
+func recoverEndpointPanic(j job) {
+	if r := recover(); r != nil {
+		fmt.Printf("[!] gopocs: %s on %s:%d panic recovered: %v\n", j.service, j.ep.Host, j.ep.Port, r)
+	}
 }
 
 type job struct {

@@ -66,15 +66,39 @@ func buildGoPocOptions(cfg config.Config, dictDir string) gopocs.Options {
 }
 
 func filterPOCNamesByQuery(names []string, query string) []string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
+	terms := pocQueryTerms(query)
+	if len(terms) == 0 {
 		return names
 	}
 	out := make([]string, 0, len(names))
 	for _, name := range names {
-		if strings.Contains(strings.ToLower(name), query) {
+		lower := strings.ToLower(name)
+		if pocNameMatchesAny(lower, terms) {
 			out = append(out, name)
 		}
 	}
 	return out
+}
+
+func pocQueryTerms(query string) []string {
+	parts := strings.FieldsFunc(query, func(r rune) bool {
+		return r == ',' || r == '，'
+	})
+	terms := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			terms = append(terms, part)
+		}
+	}
+	return terms
+}
+
+func pocNameMatchesAny(lowerName string, terms []string) bool {
+	for _, term := range terms {
+		if strings.Contains(lowerName, term) {
+			return true
+		}
+	}
+	return false
 }

@@ -98,6 +98,29 @@ func TestEngineRunEndToEndSSH(t *testing.T) {
 	}
 }
 
+type panicCracker struct{}
+
+func (panicCracker) Service() string { return "panic" }
+
+func (panicCracker) Try(context.Context, string, int, Credential, time.Duration) (bool, error) {
+	panic("simulated protocol parser panic")
+}
+
+func TestEngineRunRecoversFromCrackerPanic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "panic.txt"), []byte("admin : admin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e := New(DefaultOptions(dir))
+	e.crackers["panic"] = panicCracker{}
+	e.servicePorts[65001] = "panic"
+
+	for range e.Run(context.Background(), []Endpoint{{Host: "127.0.0.1", Port: 65001}}) {
+		t.Fatal("panic cracker should not emit findings")
+	}
+}
+
 // startTestSSHServer spins up an in-process SSH server accepting one user/pass,
 // so the cracker is exercised against a real handshake without external deps.
 func startTestSSHServer(t *testing.T, user, pass string) (string, int) {
