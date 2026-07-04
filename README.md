@@ -154,7 +154,7 @@ go build -o dddd ./cmd/dddd
 
 ### 代理配置（拉取 nuclei-templates 慢/失败时）
 
-`dddd update` 内部调用系统 `git`，会自动尊重 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量。
+`dddd update` 内部调用系统 `git`，会自动读取 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量。
 
 ```bash
 # Windows CMD
