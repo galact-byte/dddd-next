@@ -167,7 +167,7 @@ export HTTPS_PROXY=http://127.0.0.1:7890
 
 ## 致谢
 
-- [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) — 原项目作者，本项目的设计灵感与指纹库 / POC 格式来源
+- [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) — 原项目作者（MIT License），本项目的设计灵感与指纹库 / POC 格式来源
 - [projectdiscovery](https://github.com/projectdiscovery) — nuclei、httpx、subfinder、dnsx、fingerprintx 等核心引擎
 
 ## License
