@@ -63,8 +63,21 @@ func (e *Expression) String() string { return e.root.String() }
 // Eval evaluates the expression against ctx.
 func (e *Expression) Eval(ctx Context) bool { return e.root.eval(ctx) }
 
+const (
+	// maxExprLen guards against OOM from a single maliciously huge expression.
+	maxExprLen = 65536
+	// maxParseDepth limits nested parentheses to prevent stack overflow in the
+	// recursive-descent parser.
+	maxParseDepth = 64
+	// maxStringLen is the longest quoted string the lexer will accept.
+	maxStringLen = 4096
+)
+
 // Parse compiles src into an Expression.
 func Parse(src string) (*Expression, error) {
+	if len(src) > maxExprLen {
+		return nil, fmt.Errorf("fingerdsl: expression too long (%d bytes, max %d)", len(src), maxExprLen)
+	}
 	p, err := newParser(src)
 	if err != nil {
 		return nil, err
@@ -233,6 +246,10 @@ func (l *lexer) readString() (token, error) {
 	l.pos++ // skip opening "
 	var b strings.Builder
 	for l.pos < len(l.src) {
+		// Guard against runaway quoted strings (e.g. missing closing quote).
+		if b.Len() >= maxStringLen {
+			return token{}, fmt.Errorf("fingerdsl: string too long at pos %d (max %d)", start, maxStringLen)
+		}
 		c := l.src[l.pos]
 		if c == '"' {
 			l.pos++
@@ -270,9 +287,10 @@ func isIdentPart(c byte) bool {
 // --- Parser ------------------------------------------------------------
 
 type parser struct {
-	lex  lexer
-	cur  token
+	lex   lexer
+	cur   token
 	peek_ token
+	depth int
 }
 
 func newParser(src string) (*parser, error) {
@@ -300,6 +318,16 @@ func (p *parser) advance() error {
 	p.peek_ = t
 	return nil
 }
+
+func (p *parser) enter() error {
+	if p.depth >= maxParseDepth {
+		return fmt.Errorf("fingerdsl: expression too deeply nested (max %d)", maxParseDepth)
+	}
+	p.depth++
+	return nil
+}
+
+func (p *parser) leave() { p.depth-- }
 
 func (p *parser) parseExpr() (node, error) { return p.parseOr() }
 
@@ -359,7 +387,11 @@ func (p *parser) parsePrimary() (node, error) {
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
+		if err := p.enter(); err != nil {
+			return nil, err
+		}
 		inner, err := p.parseExpr()
+		p.leave()
 		if err != nil {
 			return nil, err
 		}

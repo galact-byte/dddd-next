@@ -3,6 +3,7 @@ package gopocs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"sync"
@@ -35,7 +36,14 @@ func (rdpCracker) Try(ctx context.Context, host string, port int, cred Credentia
 // grdp reports the outcome through pdu callbacks (success/ready vs error/close)
 // rather than a return value, so we bridge that to one error — with a deadline
 // so a silent server can't hang the goroutine.
-func rdpLogin(ctx context.Context, ip, domain, user, password string, port int, timeout time.Duration) error {
+func rdpLogin(ctx context.Context, ip, domain, user, password string, port int, timeout time.Duration) (err error) {
+	// grdp can panic on malformed server responses (upstream dddd #106).
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("rdp: panic: %v", r)
+		}
+	}()
+
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, strconv.Itoa(port)), timeout)
 	if err != nil {
 		return err

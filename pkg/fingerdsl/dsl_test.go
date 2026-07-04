@@ -1,6 +1,7 @@
 package fingerdsl
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -215,6 +216,51 @@ func TestParseErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseLimits(t *testing.T) {
+	t.Run("max expr length", func(t *testing.T) {
+		big := strings.Repeat("body=\"x\" && ", maxExprLen/14+1)
+		_, err := Parse(big)
+		if err == nil {
+			t.Fatal("expected error for over-long expression")
+		}
+	})
+	t.Run("max string length", func(t *testing.T) {
+		long := `body="` + strings.Repeat("x", maxStringLen+1) + `"`
+		_, err := Parse(long)
+		if err == nil {
+			t.Fatal("expected error for over-long quoted string")
+		}
+	})
+	t.Run("max nested parens", func(t *testing.T) {
+		// Build an expression nested one level deeper than the limit.
+		depth := maxParseDepth + 1
+		prefix := strings.Repeat("(", depth)
+		suffix := strings.Repeat(")", depth)
+		_, err := Parse(prefix + `body="x"` + suffix)
+		if err == nil {
+			t.Fatal("expected error for deeply-nested parens")
+		}
+	})
+	t.Run("exactly at max depth", func(t *testing.T) {
+		depth := maxParseDepth
+		prefix := strings.Repeat("(", depth)
+		suffix := strings.Repeat(")", depth)
+		_, err := Parse(prefix + `body="x"` + suffix)
+		if err != nil {
+			t.Fatalf("expected success at max depth, got: %v", err)
+		}
+	})
+	t.Run("deep not chain is fine", func(t *testing.T) {
+		// Unary NOT doesn't recurse via enter/leave, so a chain of ! should
+		// parse regardless of maxParseDepth.
+		expr := strings.Repeat("!", 100) + `body="x"`
+		_, err := Parse(expr)
+		if err != nil {
+			t.Fatalf("unexpected error for deep NOT chain: %v", err)
+		}
+	})
 }
 
 func TestRegexCache(t *testing.T) {

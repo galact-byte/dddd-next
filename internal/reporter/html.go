@@ -46,14 +46,23 @@ func (r *HTMLReporter) WriteFinding(f types.Finding) error {
 }
 
 type htmlPayload struct {
-	GeneratedAt        time.Time
-	GeneratedAtText    string
-	Findings           []htmlFinding
-	FingerprintTargets []htmlFingerprintTarget
-	SeverityStats      []htmlSeverityStat
-	TotalFindings      int
-	TotalFingerprints  int
-	TotalTargets       int
+	GeneratedAt          time.Time
+	GeneratedAtText      string
+	Findings             []htmlFinding
+	FindingsBySeverity   []htmlSeverityGroup
+	FingerprintTargets   []htmlFingerprintTarget
+	SeverityStats        []htmlSeverityStat
+	TotalFindings        int
+	TotalFingerprints    int
+	TotalTargets         int
+	HasCriticalFindings  bool
+	HasHighFindings      bool
+}
+
+type htmlSeverityGroup struct {
+	Severity string
+	Label    string
+	Findings []htmlFinding
 }
 
 type htmlSeverityStat struct {
@@ -178,19 +187,37 @@ func buildHTMLPayload(generatedAt time.Time, findings []types.Finding, fps map[s
 
 	stats := make([]htmlSeverityStat, 0, 6)
 	stats = append(stats, htmlSeverityStat{Severity: "all", Label: "全部", Count: len(findings)})
-	for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
-		stats = append(stats, htmlSeverityStat{Severity: sev, Label: severityLabel(sev), Count: counts[sev]})
+	sevOrder := []struct{ sev, label string }{
+		{"critical", "严重"}, {"high", "高危"}, {"medium", "中危"}, {"low", "低危"}, {"info", "信息"},
+	}
+	for _, s := range sevOrder {
+		stats = append(stats, htmlSeverityStat{Severity: s.sev, Label: s.label, Count: counts[s.sev]})
+	}
+
+	// Group findings by severity for section headers in the report.
+	groups := make([]htmlSeverityGroup, 0, 5)
+	sevMap := make(map[string][]htmlFinding, len(outFindings))
+	for _, f := range outFindings {
+		sevMap[f.Severity] = append(sevMap[f.Severity], f)
+	}
+	for _, s := range sevOrder {
+		if items, ok := sevMap[s.sev]; ok {
+			groups = append(groups, htmlSeverityGroup{Severity: s.sev, Label: s.label, Findings: items})
+		}
 	}
 
 	return htmlPayload{
-		GeneratedAt:        generatedAt,
-		GeneratedAtText:    generatedAt.Format("2006-01-02 15:04:05"),
-		Findings:           outFindings,
-		FingerprintTargets: fpTargets,
-		SeverityStats:      stats,
-		TotalFindings:      len(findings),
-		TotalFingerprints:  totalFP,
-		TotalTargets:       len(fpTargets),
+		GeneratedAt:         generatedAt,
+		GeneratedAtText:     generatedAt.Format("2006-01-02 15:04:05"),
+		Findings:            outFindings,
+		FindingsBySeverity:  groups,
+		FingerprintTargets:  fpTargets,
+		SeverityStats:       stats,
+		TotalFindings:       len(findings),
+		TotalFingerprints:   totalFP,
+		TotalTargets:        len(fpTargets),
+		HasCriticalFindings: counts["critical"] > 0,
+		HasHighFindings:     counts["high"] > 0,
 	}
 }
 
@@ -340,6 +367,32 @@ const htmlTpl = `<!doctype html>
     border-color: var(--brand);
     background: var(--panel-2);
   }
+  .stat-filter:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
+  }
+  .stat-filter[data-filter="critical"] .count { color: var(--critical); text-shadow: 0 0 12px rgba(239, 68, 68, 0.35); }
+  .stat-filter[data-filter="high"] .count     { color: var(--high);     text-shadow: 0 0 10px rgba(249, 115, 22, 0.3); }
+  .stat-filter[data-filter="medium"] .count   { color: var(--medium); }
+  .stat-filter[data-filter="low"] .count      { color: var(--low); }
+  .stat-filter[data-filter="info"] .count     { color: var(--info); }
+  .severity-section-header {
+    display: flex; align-items: center; gap: 10px;
+    margin: 20px 0 10px; padding-bottom: 8px;
+    border-bottom: 2px solid var(--line);
+  }
+  .severity-section-header.critical { border-color: var(--critical); }
+  .severity-section-header.high     { border-color: var(--high); }
+  .severity-section-header.medium   { border-color: var(--medium); }
+  .severity-section-header.low      { border-color: var(--low); }
+  .severity-section-header.info     { border-color: var(--info); }
+  .severity-section-header h3 { margin: 0; font-size: 15px; }
+  .severity-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .severity-dot.critical { background: var(--critical); box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
+  .severity-dot.high     { background: var(--high);     box-shadow: 0 0 6px rgba(249, 115, 22, 0.45); }
+  .severity-dot.medium   { background: var(--medium); }
+  .severity-dot.low      { background: var(--low); }
+  .severity-dot.info     { background: var(--info); }
   .stat-filter .label {
     color: var(--muted);
     font-size: 12px;
@@ -523,13 +576,48 @@ const htmlTpl = `<!doctype html>
   }
   pre {
     margin: 0;
-    padding: 12px;
+    padding: 12px 12px 12px 52px;
     color: var(--code);
     font: 12px/1.55 "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     overflow: auto;
     max-height: 360px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    counter-reset: line;
+    position: relative;
+  }
+  pre > span.line {
+    display: block;
+    counter-increment: line;
+  }
+  pre > span.line::before {
+    content: counter(line);
+    position: absolute;
+    left: 0;
+    width: 40px;
+    padding-right: 8px;
+    text-align: right;
+    color: var(--muted-2);
+    font-size: 11px;
+    user-select: none;
+  }
+  .http-box code {
+    display: block;
+    counter-reset: line;
+  }
+  .http-box code > span.line {
+    display: block;
+    counter-increment: line;
+  }
+  .http-box code > span.line::before {
+    content: counter(line);
+    display: inline-block;
+    width: 36px;
+    margin-right: 12px;
+    text-align: right;
+    color: var(--muted-2);
+    font-size: 11px;
+    user-select: none;
   }
   .fingerprint-panel {
     border: 1px solid var(--line);
@@ -587,6 +675,24 @@ const htmlTpl = `<!doctype html>
     z-index: 20;
   }
   .toast.show { opacity: 1; }
+  .back-to-top {
+    position: fixed; right: 24px; bottom: 24px;
+    width: 40px; height: 40px;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); color: var(--muted);
+    cursor: pointer; z-index: 20;
+    display: grid; place-items: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 180ms ease, border-color 160ms ease;
+  }
+  .back-to-top.show { opacity: 1; pointer-events: auto; }
+  .back-to-top:hover { border-color: var(--brand); color: var(--text); }
+  .report-footer {
+    margin-top: 32px; padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--muted-2); font-size: 12px;
+    text-align: center;
+  }
   @media (max-width: 900px) {
     .report-header,
     .detail-grid,
@@ -705,6 +811,15 @@ document.addEventListener('DOMContentLoaded', function () {
     showToast.timer = window.setTimeout(function () { toast.classList.remove('show'); }, 1600);
   }
 
+  // Back-to-top button
+  const btt = document.getElementById('backToTop');
+  if (btt) {
+    window.addEventListener('scroll', function () {
+      btt.classList.toggle('show', window.scrollY > 400);
+    });
+    btt.addEventListener('click', function () { window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  }
+
   filter('all');
 });
 </script>
@@ -739,6 +854,11 @@ document.addEventListener('DOMContentLoaded', function () {
       <div class="section-note">点击条目展开详情；请求和响应可单独复制。</div>
     </div>
     {{if .Findings}}
+    {{range .FindingsBySeverity}}
+    <div class="severity-section-header {{.Severity}}">
+      <span class="severity-dot {{.Severity}}"></span>
+      <h3>{{.Label}}（{{len .Findings}}）</h3>
+    </div>
     <div class="finding-list">
       {{range .Findings}}
       <article class="finding-card finding-{{.Severity}}" data-severity="{{.Severity}}">
@@ -783,11 +903,11 @@ document.addEventListener('DOMContentLoaded', function () {
               <div class="http-grid">
                 <div class="http-box">
                   <div class="http-toolbar"><span>Request</span><button type="button" class="copy-btn" onclick="copyText('{{.RequestID}}')">复制请求</button></div>
-                  <pre id="{{.RequestID}}">{{.Request}}</pre>
+                  <pre id="{{.RequestID}}"><code>{{.Request}}</code></pre>
                 </div>
                 <div class="http-box">
                   <div class="http-toolbar"><span>Response</span><button type="button" class="copy-btn" onclick="copyText('{{.ResponseID}}')">复制响应</button></div>
-                  <pre id="{{.ResponseID}}">{{.Response}}</pre>
+                  <pre id="{{.ResponseID}}"><code>{{.Response}}</code></pre>
                 </div>
               </div>
             </div>
@@ -797,6 +917,7 @@ document.addEventListener('DOMContentLoaded', function () {
       </article>
       {{end}}
     </div>
+    {{end}}
     {{else}}
     <div class="empty-state">本次报告没有漏洞结果。</div>
     {{end}}
@@ -824,6 +945,12 @@ document.addEventListener('DOMContentLoaded', function () {
     <div class="empty-state">没有指纹命中。</div>
     {{end}}
   </section>
+
+  <button type="button" class="back-to-top" id="backToTop" title="回到顶部" aria-label="回到顶部">&#9650;</button>
+
+  <footer class="report-footer">
+    dddd-next · 安全扫描报告 · 生成于 {{.GeneratedAtText}}
+  </footer>
 </main>
 </body>
 </html>
