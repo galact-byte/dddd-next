@@ -57,3 +57,4 @@ progress.md
 # Widen the net but keep the committed .env.example template.
 .env.*
 !.env.example
+output/

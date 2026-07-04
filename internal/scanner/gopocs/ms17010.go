@@ -91,7 +91,6 @@ func probeMS17010(ctx context.Context, host string, port int, timeout time.Durat
 		return nil, nil
 	}
 	treeID := []byte{reply[28], reply[29]}
-	_ = tn
 
 	pipe := append([]byte(nil), ms17010TransNamedPipe...)
 	pipe[28], pipe[29] = treeID[0], treeID[1]

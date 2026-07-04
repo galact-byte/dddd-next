@@ -9,28 +9,7 @@ import (
 	"dddd-next/internal/types"
 )
 
-// findingLine formats one finding as a colored process line, severity-tagged.
-func findingLine(f types.Finding) string {
-	const reset = "\033[0m"
-	name := f.ID
-	if name == "" {
-		name = f.Name
-	}
-	return fmt.Sprintf("  %s[%s]%s %s  %s", sevColor(f.Severity), strings.ToUpper(string(f.Severity)), reset, name, f.Target)
-}
-
-func sevColor(s types.Severity) string {
-	switch s {
-	case types.SeverityCritical, types.SeverityHigh:
-		return "\033[31m"
-	case types.SeverityMedium:
-		return "\033[33m"
-	case types.SeverityLow:
-		return "\033[32m"
-	default:
-		return "\033[36m"
-	}
-}
+// printFinding and sevColor moved to color.go
 
 // countingReporter wraps a Reporter to tally what was written, so the run can
 // print an end-of-scan summary without each stage threading counters back.

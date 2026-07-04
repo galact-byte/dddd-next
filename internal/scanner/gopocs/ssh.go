@@ -23,6 +23,7 @@ func (sshCracker) Try(ctx context.Context, host string, port int, cred Credentia
 	if err != nil {
 		return false, err
 	}
+	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
 	cfg := &ssh.ClientConfig{
@@ -33,7 +34,6 @@ func (sshCracker) Try(ctx context.Context, host string, port int, cred Credentia
 
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
-		conn.Close()
 		if isSSHAuthFailure(err) {
 			return false, nil
 		}

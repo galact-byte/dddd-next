@@ -34,7 +34,11 @@ func (mongodbCracker) Try(ctx context.Context, host string, port int, cred Crede
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = client.Disconnect(context.Background()) }()
+	defer func() {
+		discCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = client.Disconnect(discCtx)
+	}()
 
 	if err := client.Ping(ctx2, nil); err != nil {
 		if isMongoAuthFailure(err) {
