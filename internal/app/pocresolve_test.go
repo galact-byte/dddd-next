@@ -41,6 +41,28 @@ func TestFreshTemplateIndexPrefersUpdated(t *testing.T) {
 	}
 }
 
+func TestSavedTemplateDirectoryPreservesLegacyFallback(t *testing.T) {
+	saved := t.TempDir()
+	template := filepath.Join(saved, "custom.yaml")
+	if err := os.WriteFile(template, []byte("id: custom\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := &Pipeline{configDir: t.TempDir(), cfg: config.Config{SavedNucleiTemplateDir: saved}}
+	if got := p.freshTemplateIndex()["custom"]; got != template {
+		t.Fatalf("saved template lookup = %q", got)
+	}
+	if got := p.legacyPOCDir(); got != filepath.Join(p.configDir, "pocs", "legacy") {
+		t.Fatalf("legacy fallback = %q", got)
+	}
+	if got := p.nucleiTemplateDir(); got != saved {
+		t.Fatalf("full scan directory = %q", got)
+	}
+	p.cfg.NucleiTemplateDir = "explicit"
+	if got := p.nucleiTemplateDir(); got != "explicit" {
+		t.Fatalf("explicit directory = %q", got)
+	}
+}
+
 // TestFreshTemplateIndexMissingDir confirms precise mode degrades to
 // legacy-only (empty index, no panic) when `dddd update` was never run.
 func TestFreshTemplateIndexMissingDir(t *testing.T) {

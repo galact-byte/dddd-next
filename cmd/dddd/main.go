@@ -21,7 +21,7 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.45"
+var appVersion = "0.1.46"
 
 func main() {
 	loadDotEnv()
@@ -64,6 +64,11 @@ func runScan(args []string) int {
 			return 2
 		}
 		fmt.Printf("[*] proxy test ok: %s via %s\n", cfg.ProxyTestURL, config.RedactURLCredentials(cfg.ProxyURL))
+	}
+
+	if err := applyTemplateSettings(&cfg); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
 	}
 
 	printBanner()
@@ -191,6 +196,8 @@ Scan flags:
   -lpm            Hunter low-perception: fingerprint from Hunter's banner, no probe
   -limit <n>      max assets per recon query (fofa/hunter/quake; 0 = 100)
 
+  -nt <dir>      template directory for this scan (overrides remembered directory)
+  -nuclei-template <dir>  long alias for -nt
   -full           run all nuclei templates instead of fingerprint-matched POCs
   -no-general     skip the product-independent General-Poc set (precise mode)
   -severity <s>   nuclei severity filter (repeatable: critical,high,medium,low,info)
@@ -223,7 +230,7 @@ Scan flags:
   -log-level      debug | info | warn | error (default info)
 
 Subcommands:
-  update          Pull the latest nuclei-templates and POC sources via git
+  update [-nt <dir>]  Update official nuclei templates; remember dir on success
   version         Show version info
   help            Show this help
 
@@ -242,6 +249,9 @@ Configs:
   binary or in the working directory, dddd-next writes them to
   ~/Downloads/dddd-next/configs and uses that directory. Put configs/ next to
   the binary to override or customize them.
+  Use `+"`dddd update -nt <dir>`"+` to select and remember a template directory.
+  Later updates and scans reuse it; scan -nt overrides it for that run only.
+  The directory is stored in the user config directory under dddd-next/templates.json.
 
 Vulnerability scan (nuclei):
   Default precise mode runs only the POCs a target's fingerprints map to
@@ -253,6 +263,17 @@ Inspired by SleepingBag945/dddd (MIT License).
 }
 
 func runUpdate(args []string) int {
+	dir, err := parseUpdateArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Usage: dddd update [-nt <template-directory>]")
+		return 2
+	}
+	settingsPath, err := templateSettingsPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -262,23 +283,9 @@ func runUpdate(args []string) int {
 		return 2
 	}
 
-	cfgDir := resolveConfigDir()
-	sources := updater.DefaultSources(cfgDir)
-
-	fmt.Printf("dddd-next update — %d source(s) -> %s\n", len(sources), cfgDir)
-	fmt.Println("(set HTTPS_PROXY if behind a restricted network)")
-	fmt.Println()
-
-	u := updater.New(sources)
-	results := u.Update(ctx)
-
-	fmt.Println()
-	fmt.Print(updater.Summary(results))
-
-	for _, r := range results {
-		if r.Action == updater.ActionFailed {
-			return 1
-		}
+	if err := updateTemplates(ctx, dir, resolveConfigDir(), settingsPath, nil); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 	return 0
 }
