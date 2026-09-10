@@ -82,13 +82,14 @@ type Config struct {
 	LogLevel     string
 	AuditLogFile string
 
-	APIConfigFilePath     string
-	NucleiTemplateDir     string
-	WorkflowYamlPath      string
-	FingerConfigFilePath  string
-	DirSearchYaml         string
-	SubdomainWordListFile string
-	MasscanPath           string
+	APIConfigFilePath      string
+	NucleiTemplateDir      string
+	SavedNucleiTemplateDir string
+	WorkflowYamlPath       string
+	FingerConfigFilePath   string
+	DirSearchYaml          string
+	SubdomainWordListFile  string
+	MasscanPath            string
 
 	Subcommand string
 }

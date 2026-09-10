@@ -1709,7 +1709,7 @@ func configuredPath(custom, fallback string) string {
 }
 
 func (p *Pipeline) nucleiTemplateDir() string {
-	return configuredPath(p.cfg.NucleiTemplateDir, filepath.Join(p.configDir, "nuclei-templates"))
+	return configuredPath(p.cfg.NucleiTemplateDir, configuredPath(p.cfg.SavedNucleiTemplateDir, filepath.Join(p.configDir, "nuclei-templates")))
 }
 
 func (p *Pipeline) workflowYamlPath() string {

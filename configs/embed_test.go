@@ -42,7 +42,7 @@ func collectBaselineConfigFiles(t *testing.T) map[string][]byte {
 		if err != nil {
 			t.Fatal(err)
 		}
-		files[filepath.ToSlash(path)] = data
+		files[filepath.ToSlash(path)] = canonicalConfigText(data)
 	}
 	addDir := func(path string) {
 		t.Helper()
@@ -57,7 +57,7 @@ func collectBaselineConfigFiles(t *testing.T) map[string][]byte {
 			if err != nil {
 				return err
 			}
-			files[filepath.ToSlash(filePath)] = data
+			files[filepath.ToSlash(filePath)] = canonicalConfigText(data)
 			return nil
 		})
 		if err != nil {
@@ -72,6 +72,13 @@ func collectBaselineConfigFiles(t *testing.T) map[string][]byte {
 	addFile(filepath.Join("pocs", "mapping.yaml"))
 	addDir(filepath.Join("pocs", "legacy"))
 	return files
+}
+
+// canonicalConfigText mirrors the repository's .gitattributes rule: bundled
+// configuration assets use LF. Git may nevertheless materialize text as CRLF
+// in a Windows working tree, which must not make the embedded archive stale.
+func canonicalConfigText(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 }
 
 func readBundleZip(t *testing.T) map[string][]byte {

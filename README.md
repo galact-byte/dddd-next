@@ -96,7 +96,7 @@ Windows: %USERPROFILE%\Downloads\dddd-next\configs
 Linux:   ~/Downloads/dddd-next/configs
 ```
 
-如果需要自定义指纹、字典或 legacy POC，把 `configs/` 放到 exe 同目录即可；同目录外部配置优先级最高。下载目录中的内置副本可能随版本刷新覆盖，不建议直接当作长期自定义配置目录。`dddd update` 会把最新 `nuclei-templates` 拉取到当前实际使用的配置目录。
+如果需要自定义指纹、字典或 legacy POC，把 `configs/` 放到 exe 同目录即可；同目录外部配置优先级最高。下载目录中的内置副本可能随版本刷新覆盖，不建议直接当作长期自定义配置目录。默认 `dddd update` 会把最新 `nuclei-templates` 拉取到当前实际使用的配置目录。
 
 ```bash
 # 构建
@@ -104,6 +104,13 @@ go build -o dddd ./cmd/dddd
 
 # 首次使用：拉取最新 nuclei-templates
 ./dddd update
+
+# 自行指定模板目录：首次成功后会记住，之后 update 和扫描自动复用
+./dddd update -nt /data/nuclei-templates
+./dddd update
+
+# 仅本次扫描临时覆盖记住的目录
+./dddd -t http://example.com -nt /data/other-nuclei-templates
 
 # 扫描 IP / 网段 / 网站（默认精准 POC + 弱口令 + Shiro 专用检测）
 ./dddd -t 192.168.1.1
