@@ -45,7 +45,7 @@ func TestParseArgsTargetsFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	cfg, err := ParseArgs([]string{"dddd-next", "-tf", path})
+	cfg, err := ParseArgs([]string{"dddd-next", "-t", path})
 	if err != nil {
 		t.Fatalf("ParseArgs: %v", err)
 	}

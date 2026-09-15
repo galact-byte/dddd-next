@@ -11,8 +11,7 @@ import (
 )
 
 type Config struct {
-	Targets     []string
-	TargetsFile string
+	Targets []string
 
 	Output     string
 	OutputType string
@@ -140,9 +139,8 @@ func ParseArgs(args []string) (Config, error) {
 	fs.SetOutput(io.Discard)
 
 	var targets stringList
-	fs.Var(&targets, "t", "target (repeatable): IP / CIDR / Range / URL / Domain / search query")
+	fs.Var(&targets, "t", "target (repeatable): IP / CIDR / Range / URL / Domain / search query / local file")
 	fs.Var(&targets, "target", "target (legacy long alias)")
-	fs.StringVar(&cfg.TargetsFile, "tf", "", "file containing targets, one per line")
 
 	fs.StringVar(&cfg.Output, "o", cfg.Output, "result output file")
 	fs.StringVar(&cfg.Output, "output", cfg.Output, "result output file (legacy long alias)")
@@ -295,20 +293,30 @@ func ParseArgs(args []string) (Config, error) {
 		}
 	}
 
-	cfg.Targets = append(cfg.Targets, targets...)
+	for _, target := range targets {
+		info, err := os.Stat(target)
+		if err != nil {
+			if os.IsPermission(err) {
+				return cfg, fmt.Errorf("config: access target file: %w", err)
+			}
+			// URLs and search queries may be invalid filesystem paths on Windows.
+			cfg.Targets = append(cfg.Targets, target)
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return cfg, fmt.Errorf("config: target file %q must be a regular file", target)
+		}
+		fileTargets, err := readLines(target)
+		if err != nil {
+			return cfg, fmt.Errorf("config: read target file %q: %w", target, err)
+		}
+		cfg.Targets = append(cfg.Targets, fileTargets...)
+	}
 	cfg.Severity = append(cfg.Severity, severity...)
 	cfg.ExcludeSeverity = append(cfg.ExcludeSeverity, excludeSeverity...)
 	cfg.Tags = append(cfg.Tags, tags...)
 	cfg.ExcludeTags = append(cfg.ExcludeTags, excludeTags...)
 	cfg.CustomCreds = append(cfg.CustomCreds, customCreds...)
-
-	if cfg.TargetsFile != "" {
-		fileTargets, err := readLines(cfg.TargetsFile)
-		if err != nil {
-			return cfg, fmt.Errorf("config: read targets file: %w", err)
-		}
-		cfg.Targets = append(cfg.Targets, fileTargets...)
-	}
 
 	if cfg.CustomCredsFile != "" {
 		fileCreds, err := readLines(cfg.CustomCredsFile)
@@ -326,7 +334,7 @@ func (c Config) Validate() error {
 		return nil
 	}
 	if len(c.Targets) == 0 {
-		return errors.New("config: no targets supplied (-t or -tf required)")
+		return errors.New("config: no targets supplied (-t required)")
 	}
 	switch c.OutputType {
 	case "text", "json":
@@ -355,8 +363,14 @@ func readLines(path string) ([]string, error) {
 
 	var out []string
 	scanner := bufio.NewScanner(f)
+	firstLine := true
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		line := scanner.Text()
+		if firstLine {
+			line = strings.TrimPrefix(line, "\ufeff")
+			firstLine = false
+		}
+		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}

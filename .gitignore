@@ -58,3 +58,7 @@ progress.md
 .env.*
 !.env.example
 output/
+
+# 本地 Pi 配置与会话状态
+/.pi/
+/.until-done/

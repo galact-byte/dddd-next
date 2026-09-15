@@ -1,5 +1,44 @@
 # 修改记录 — dddd-next
 
+## 2026-09-15 — v0.1.48：统一目标输入与自定义 FOFA 服务器
+
+### 背景与目标
+
+- 根据 Issue #1，允许通过 `FOFA_SERVER` 选择兼容 FOFA 协议的自建服务器；留空使用官方 `https://fofa.info`。
+
+### 影响与兼容性
+
+- 恢复原版 `-t 文件` 输入，移除独立 `-tf`，保留 `-target` 别名；支持 BOM、Windows 换行、重复目标参数及文件混合输入。README 明确升级脚本须将 `-tf` 改为 `-t`。
+- 配置沿用环境变量和 `.env`，无需增加 CLI 参数；当前仍要求 `FOFA_EMAIL` 与 `FOFA_KEY`。地址允许路径前缀，自动追加 `/api/v1/search/all`。
+- 替换 uncover 内置 FOFA Agent，继续使用其余引擎和会话限速；独立配置 FOFA HTTPS 证书校验、同源跳转、有限重试及错误脱敏。未增加依赖或修改 `go.mod` / `go.sum`。
+- 查询错误现在返回扫描入口并显示警告；部分查询结果及其他引擎结果保留。内网资产仍受原有 `-ld` 开关控制。
+- `FOFA_SERVER` 从 `v0.1.48` 起支持；回到官方时清空该配置并换回官方凭证。v0.1.47 读取目标文件仍需 `-tf`，其原始二进制不包含本次修复。
+
+### 文件与实现
+
+| 操作 | 路径 | 说明 |
+| --- | --- | --- |
+| 新增 | `internal/discovery/uncover/fofa.go`、`fofa_test.go` | FOFA 地址校验、编码、固定页大小、数量上限、响应校验及本机接口回归 |
+| 修改 | `internal/discovery/uncover/uncover.go` | 接入 FOFA Agent，返回错误并保留资产，清理会话资源 |
+| 修改/新增 | `internal/app/pipeline.go`、`recon_test.go` | 读取服务器配置，分页失败仍处理已有资产 |
+| 修改 | `.env.example`、`README.md`、`cmd/dddd/main.go` | 官方与自建示例、帮助、版本及兼容范围 |
+| 修改/新增 | `internal/config/config.go`、`config_test.go`、`target_input_test.go` | 统一目标输入与文件读取回归 |
+| 修改 | `.gitignore` | 仅追加根目录 Pi 配置与会话状态，保留源码、测试和项目文档 |
+| 修改 | `docs/RESEARCH_FOFA_API.md` | 标明调研基线与实施状态 |
+
+### 验证
+
+- `go test ./...`、`go vet ./...`：通过。
+- `go test -race ./internal/discovery/uncover -count=1`：通过，日志 `output/fofa-race.log`。
+- `go build -o output/dddd-next_0.1.48_windows_amd64.exe ./cmd/dddd`：通过，版本输出 `dddd-next 0.1.48`。
+- `node output/verify-fofa.cjs output/dddd-next_0.1.48_windows_amd64.exe`：通过；本机 `.env` → API → 服务识别 → HTTP 指纹，以及分页部分成功、鉴权失败三种场景均正常结束，日志位于 `output/fofa-verify-Q8fasK/`。
+- `node output/verify-targetfile.cjs output/dddd-next_0.1.48_windows_amd64.exe -t`：通过；四行带 BOM/CRLF 的目标文件正确进入端口扫描和 HTTP 指纹链路，日志位于 `output/targetfile-verify-eDvjtH/`。
+
+### 已知限制与后续
+
+- 未调用真实官方或自建账号；不消耗 API 额度。仅支持 FOFA 搜索协议，不支持仅 Bearer 鉴权或其他响应结构。
+- 额外执行 `go mod verify` 发现既有本机缓存 `go-exploit v1.51.0` 的三个内嵌文件与模块压缩包不同（`payload/reverse/vbs/reverse_http.vbs`、`payload/webshell/jsp/webshell.jsp`、`payload/webshell/jsp/webshell_min.jsp`）；本次未修改该依赖或缓存。上述测试、构建及本机实跑均通过，但没有将依赖完整性检查标记为通过。
+
 > **修订记录**
 >
 > - v0.1.46: **可记忆的 nuclei 模板目录**——`dddd update -nt <目录>` 首次成功更新后将模板根目录保存至用户配置目录的 `dddd-next/templates.json`；后续 `dddd update` 和普通扫描会自动复用该目录，扫描 `-nt` 仅临时覆盖。更新失败不会改写旧目录；精准模式仍回退内置 legacy POC，避免自定义目录影响专有模板。补充更新参数、成功/失败持久化、扫描复用与兼容性回归测试；`go test ./...`、`go vet ./...`、Windows 构建验证通过。

@@ -443,6 +443,7 @@ func (p *Pipeline) detectServices(ctx context.Context, openPorts []portscan.Resu
 func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Result {
 	infof("recon: %d search query(ies) via fofa/hunter/quake...\n", len(queries))
 	opts := uncover.DefaultOptions()
+	opts.FofaServer = os.Getenv("FOFA_SERVER")
 	opts.Proxy = p.cfg.ProxyURL
 	if len(p.cfg.ReconAgents) > 0 {
 		opts.Agents = append([]string(nil), p.cfg.ReconAgents...)
@@ -458,7 +459,6 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 		assets, err := src.Query(ctx, q, p.cfg.ReconLimit)
 		if err != nil {
 			warnf("recon %q: %v\n", q, err)
-			continue
 		}
 		for _, a := range assets {
 			if a.IP != "" && !p.cfg.AllowLocalAreaDomain && isPrivateIP(a.IP) {
