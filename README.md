@@ -20,7 +20,7 @@
 
 ## 已实现能力
 
-- 输入自动分类（IP / CIDR / IP-Range / URL / Domain / 测绘语法）
+- 输入自动分类（IP / CIDR / IP-Range / URL / Domain / 测绘语法）；`-t` 也可逐行加载本地目标文件
 - 主动指纹识别（DSL 支持 `与 / 或 / 非 / 括号` 逻辑，8000+ 规则）
 - 被动指纹识别（httpx wappalyzer 技术栈识别，含版本号，喂给 POC 精准选择）
 - 产品路径二次指纹（探测 /nacos/、/druid/ 等已知产品路径，发现首页漏掉的子路径产品；`-no-dir` 关闭）
@@ -35,7 +35,7 @@
 - 漏洞探测：MS17-010（EternalBlue 永恒之蓝）SMB 远程命令执行
 - 未授权访问探测：memcached / ADB（安卓调试桥，RCE 等价）/ JDWP（Java 调试，RCE 等价）/ Telnet（直进 shell）
 - NetBIOS 信息探测（UDP 137 + TCP 139 NTLM，泄露主机名 / 工作组 / 域 / OS 版本）
-- Hunter / Fofa / Quake 测绘 API（`.env` 管理密钥）
+- Hunter / FOFA / Quake 测绘 API（`.env` 管理密钥，FOFA 支持自定义兼容服务器地址）
 - TXT / JSON / HTML 三种报告 + 审计日志；HTML 报告已重做为高密度暗色布局，支持严重度筛选、漏洞详情展开、请求 / 响应复制和指纹资产区
 
 ## 兼容状态与已知差异
@@ -52,6 +52,50 @@
 - masscan 类超大网段快速扫描（当前 TCP connect 为默认；`-st syn` 可用但依赖 npcap / 管理员权限）。
 - nuclei 官方模板持续变化，个别 CVE 是否命中仍取决于模板兼容性、产品指纹和目标环境条件。
 - 生产环境使用前建议先用授权靶标或小范围资产做回归确认。
+
+## 从原版迁移
+
+常用旧参数已保留别名，但参数名兼容不代表默认行为、扫描引擎和配置文件格式完全一致。以下对照原 dddd 2.0.1；使用前可运行 `dddd -h` 查看当前帮助。
+
+### 目标输入
+
+目标输入统一使用 `-t`（保留原版长别名 `-target`）：输入为现有本地文件时逐行加载，否则按 IP、网段、域名、URL 或测绘语句处理。不再提供独立的 `-tf` 参数。
+
+> 版本说明：从 **v0.1.48** 起，文件输入统一使用 `-t`，移除 `-tf`。从 v0.1.47 及更早版本升级时，请将脚本中的 `-tf 文件` 改为 `-t 文件`；v0.1.47 本身读取文件仍需使用 `-tf`。下列示例适用于 v0.1.48 及以后版本。
+
+| 场景 | 原版用法 | dddd-next 用法 |
+|:---|:---|:---|
+| 单个 IP、网段、域名或 URL | `-t 192.0.2.1` | 相同；`-target` 长别名也可用 |
+| 文件逐行输入 | `-t 1.txt` | 相同，自动读取现有本地文件 |
+| 多个直接目标 | `-t 192.0.2.1,192.0.2.2` | 重复参数：`-t 192.0.2.1 -t 192.0.2.2`，或使用目标文件；不拆分 `-t` 值中的逗号 |
+| 重新导入结果 | `-t result.txt` | 相同；支持 fscan 的 `ip:port open` 和 dddd 的 `[FP] ...` 行，其他历史格式不保证兼容 |
+
+文件相对路径以**运行命令时的工作目录**为准；包含空格的路径需要加引号。文件内容使用 UTF-8（支持 BOM 和 Windows 换行），一行一个目标，空行和 `#` 注释行会跳过。`-t` 优先加载现有本地文件；路径不存在时按直接目标处理，因此文件名或目录写错仍可能进入域名解析。运行前应确认文件路径正确。
+
+```bat
+REM 文件逐行输入并扫描全部端口
+dddd.exe -t 1.txt -p 1-65535
+
+REM 多个目标可重复使用 -t，也可混合文件和直接目标
+dddd.exe -t "目标 列表.txt" -t 192.0.2.1 -p 80,443
+```
+
+启动后先核对 `N target(s)` 是否与输入相符。四行 IP 应显示 `4 target(s)`，并进入 `TCP port scanning 4 host(s) x 65535 ports...`；若显示域名解析，应先检查目标输入方式。
+
+### 默认行为和实现差异
+
+| 项目 | 原版行为 | dddd-next 行为 / 对应用法 |
+|:---|:---|:---|
+| 主机存活探测 | 默认先做 ICMP 探测，`-Pn` 关闭 | 默认直接扫描端口；加 `-ping` 才先做 ICMP 预筛，`-tp` 启用 TCP 存活探测，`-Pn` 可关闭预筛。没有 `[Alive]` 输出不代表没有扫端口 |
+| CDN 资产 | 默认跳过，`-ac` 允许扫描 | 默认标记但继续探测；`-skip-cdn` 才排除，`-ac` 可覆盖排除设置 |
+| SYN 扫描 | `-st syn` 依赖 masscan，`-mp` 指定路径 | `-st syn` 使用内置 SYN 实现；Windows 依赖 Npcap / 管理员权限，不可用时回退 TCP。`-mp` 仅接受参数，不调用 masscan；`-sst` 表示发包速率 |
+| 服务识别 | Nmap 风格探针 | 使用 fingerprintx；`-tc` / `-nto` 仍控制识别并发和超时，识别结果不保证完全一致 |
+| 代理预检查 | 默认开启代理测试 | 默认关闭；需要时使用 `-proxy <地址> -pt`，`-ptu` 指定测试 URL |
+| 输出位置 | 默认 `result.txt`，HTML 报告需指定 | 默认生成 `output/<时间戳>/result.txt` 和 `report.html`；`-o` / `-ho` 可指定相对文件名，`-ho ""` 关闭 HTML |
+| 测绘 API 配置 | `-acf` 指定 YAML | 使用环境变量或 `.env`，字段见 [.env.example](.env.example)；`-acf` 仅接受参数，目前不会加载原版 API YAML |
+| 模板和指纹配置 | 默认 `config/` 目录 | 使用 `configs/` 和内置配置释放机制，详见下方“快速开始”；`-nt` / `-fy` / `-wy` 等路径参数仍可用，旧配置内容需按当前格式核对 |
+
+常用旧开关可继续使用：`-npoc` 等同 `-no-poc`，`-nb` 等同 `-no-brute`，`-nd` 等同 `-no-dir`，`-dgp` 等同 `-no-general`，`-s` 等同 `-severity`，`-et` 等同 `-exclude-tags`。`-ngp` 只关闭 GoPoC 检测，Nuclei 和 Shiro 检测仍可能执行；仅做信息收集时使用 `-no-poc`。
 
 ## 项目结构
 
@@ -120,6 +164,9 @@ go build -o dddd ./cmd/dddd
 # 常用全端口入口：发现 Web 与非 Web 服务后分别进入 POC / 弱口令链路
 ./dddd -t 192.168.1.1 -p 1-65535
 
+# 从文件逐行加载目标（与直接目标统一使用 -t，版本差异见“从原版迁移”）
+./dddd -t targets.txt -p 1-65535
+
 # 指定端口或端口段
 ./dddd -t 192.168.1.1 -p 80,443,8080,8848,6379,3306
 ./dddd -t 192.168.1.1 -p 8000-9000
@@ -138,6 +185,44 @@ go build -o dddd ./cmd/dddd
 # 全量 nuclei 模板（默认是指纹精准模式）
 ./dddd -t http://example.com -full
 ```
+
+### FOFA 官方与自建接口
+
+> `FOFA_SERVER` 从 **v0.1.48** 起支持；v0.1.47 及更早版本无法通过此配置更换服务器。
+
+复制 [.env.example](.env.example) 为 `.env`，放在工作目录或程序所在目录。系统环境变量优先，其次是工作目录 `.env`，最后是程序目录 `.env`；已设置的变量（包括空值）不会被后续文件覆盖。
+
+官方 FOFA 无需设置服务器地址：
+
+```dotenv
+FOFA_SERVER=
+FOFA_EMAIL=你的邮箱
+FOFA_KEY=你的官方Key
+```
+
+使用自建反向代理或兼容 FOFA 的服务时，填写该服务的基础地址和凭证：
+
+```dotenv
+FOFA_SERVER=https://fofa-gateway.example.com/fofa
+FOFA_EMAIL=该服务对应的邮箱
+FOFA_KEY=该服务对应的Key
+```
+
+程序会请求 `https://fofa-gateway.example.com/fofa/api/v1/search/all`。基础地址允许末尾斜杠和路径前缀，不要填写完整搜索接口、查询参数或 URL 内嵌凭证。清空 `FOFA_SERVER` 即恢复官方地址 `https://fofa.info`，同时换回官方邮箱和 Key。每次运行选择一个 FOFA 服务器。
+
+查询命令保持一致，例如在 Windows CMD 中只使用 FOFA，最多取 100 条：
+
+```bat
+dddd.exe -fofa -t "app=\"seeyon\"" -fmc 100
+```
+
+Linux / macOS shell 可写为 `./dddd -fofa -t 'app="seeyon"' -fmc 100`。`FOFA_SERVER` 与 `-proxy` 不同：前者选择接口服务器，后者配置访问接口及扫描目标时使用的网络代理。这个设置仅影响 FOFA，Hunter / Quake 继续使用各自的接口。
+
+兼容范围是 FOFA 的 `/api/v1/search/all`：支持 `key`、`email`、`qbase64`、`fields=ip,port,host`、`page`、`size`、`full` 查询参数，以及包含 `error`、`size`、`results` 的 JSON 响应。当前仍要求邮箱和 Key 同时配置，不支持仅 Bearer Token 鉴权或其他返回结构；这类服务需要根据接口文档另行适配。HTTPS 会验证服务器证书，禁止跨服务器或改变协议的重定向。
+
+查询失败会显示警告；如果已有部分结果，仍会继续扫描这些资产。鉴权失败、持续限流和无效返回格式不会被当成正常的零结果。常见状态：`HTTP 401/403` 检查凭证及权限，`HTTP 429` 检查配额或频率，`HTTP 404` 检查基础地址及路径前缀。
+
+若自建服务返回内网 IP，需添加 `-ld` 才会保留这些资产；否则仍按原有规则过滤内网地址，与 API 是否查询成功无关。
 
 ### 输出文件
 

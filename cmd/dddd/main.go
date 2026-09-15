@@ -21,7 +21,7 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.47"
+var appVersion = "0.1.48"
 
 func main() {
 	loadDotEnv()
@@ -167,8 +167,8 @@ Usage:
   dddd <subcommand>
 
 Scan flags:
-  -t <target>     target (repeatable): IP / CIDR / Range / IP:Port / Domain / URL / search query
-  -tf <file>      targets file, one per line (accepts fscan "ip:port open" and dddd "[FP] ..." lines)
+  -t <target>     target (repeatable): IP / CIDR / Range / IP:Port / Domain / URL / search query / local file
+                 local file: one target per line (also accepts fscan "ip:port open" and dddd "[FP] ..." lines)
   -o <file>       result output file (default result.txt)
   -ot <text|json> output format (default text)
   -ho <file>      HTML report file (empty disables)
@@ -243,6 +243,9 @@ Recon (search-query targets):
   Queries like -t 'app="seeyon"' hit fofa/hunter/quake. Put API keys in a
   .env file next to the binary (copy .env.example): FOFA_EMAIL + FOFA_KEY,
   HUNTER_API_KEY, QUAKE_TOKEN. Free FOFA accounts have no API quota.
+  FOFA_SERVER: optional HTTP(S) base URL for a FOFA-compatible server;
+  empty uses https://fofa.info. Appends /api/v1/search/all (prefix paths allowed).
+  Keep FOFA_EMAIL + FOFA_KEY configured for the selected server.
 
 Configs:
   Release binaries include baseline configs. If no configs/ exists next to the
