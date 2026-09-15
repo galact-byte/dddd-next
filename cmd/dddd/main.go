@@ -1,7 +1,9 @@
 // Package main is the dddd-next CLI entry point.
 //
 //	dddd -t <target> [flags]   scan mode (default)
-//	dddd update                pull latest nuclei-templates and POC sources
+//	dddd update                pull latest nuclei-templates
+//	dddd upgrade               update the executable
+//	dddd upgrade --check       check for a newer executable
 //	dddd version               print version
 //	dddd help                  usage
 package main
@@ -21,24 +23,29 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.48"
+var appVersion = "0.1.49"
 
 func main() {
 	loadDotEnv()
+	os.Exit(runCLI(os.Args))
+}
 
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+func runCLI(args []string) int {
+	if len(args) > 1 {
+		switch args[1] {
 		case "version", "-v", "--version":
 			fmt.Print(versionLine())
-			return
+			return 0
 		case "help", "-h", "--help":
 			printHelp()
-			return
+			return 0
 		case "update":
-			os.Exit(runUpdate(os.Args[2:]))
+			return runUpdate(args[2:])
+		case "upgrade":
+			return runBinaryUpdate(args[2:])
 		}
 	}
-	os.Exit(runScan(os.Args))
+	return runScan(args)
 }
 
 func versionLine() string {
@@ -213,7 +220,7 @@ Scan flags:
   -iserver <url>  custom interactsh server URL
   -itoken <t>     interactsh auth token
 
-  -up <user:pass> custom credential (repeatable)
+  -up <user:pass> custom credential (repeatable; long alias: -username-password)
   -upf <file>     custom credential file (user:pass per line)
 
   -tst <n>        TCP port scan threads (default 1000)
@@ -229,13 +236,18 @@ Scan flags:
   -ptu <url>      proxy test URL (default https://www.baidu.com)
   -log-level      debug | info | warn | error (default info)
 
-Subcommands:
+Subcommands (run separately from scan flags):
+  upgrade         Upgrade this executable to the latest stable release
+  upgrade --check Check for a newer executable without downloading it
   update [-nt <dir>]  Update official nuclei templates; remember dir on success
+                     -nuclei-template is the long alias for -nt
   version         Show version info
   help            Show this help
 
 Proxy:
-  git and scanners inherit HTTP_PROXY / HTTPS_PROXY from the environment.
+  Updates and scanners inherit HTTP_PROXY / HTTPS_PROXY from the environment.
+  GITHUB_TOKEN: optional token for executable update API requests (also via .env).
+  The token is not sent to asset downloads or redirect destinations.
   Windows CMD:        set HTTPS_PROXY=http://127.0.0.1:7890
   Windows PowerShell: $env:HTTPS_PROXY="http://127.0.0.1:7890"
 
@@ -293,9 +305,8 @@ func runUpdate(args []string) int {
 	return 0
 }
 
-// loadDotEnv pulls local secrets (recon API keys) from a .env file next to the
-// working dir or the binary into the environment, where uncover reads them.
-// Both lookups are best-effort: .env is optional and gitignored.
+// loadDotEnv loads optional recon and update credentials from the working
+// directory and executable directory. Existing environment values take priority.
 func loadDotEnv() {
 	_ = config.LoadDotEnv(".env")
 	if exe, err := os.Executable(); err == nil {

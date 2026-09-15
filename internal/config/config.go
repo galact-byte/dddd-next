@@ -126,8 +126,8 @@ func ParseArgs(args []string) (Config, error) {
 
 	if len(args) > 1 {
 		switch args[1] {
-		case "update":
-			cfg.Subcommand = "update"
+		case "update", "upgrade":
+			cfg.Subcommand = args[1]
 			return cfg, nil
 		case "version", "-v", "--version":
 			cfg.Subcommand = "version"

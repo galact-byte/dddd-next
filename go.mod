@@ -3,11 +3,13 @@ module dddd-next
 go 1.26.3
 
 require (
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/jlaffaye/ftp v0.0.0-20190624084859-c1312a7102bf
 	github.com/lib/pq v1.11.2
 	github.com/microsoft/go-mssqldb v1.9.2
 	github.com/miekg/dns v1.1.68
+	github.com/minio/selfupdate v0.6.1-0.20230907112617-f11e74f84ca7
 	github.com/praetorian-inc/fingerprintx v1.1.15
 	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/go-smb2 v0.0.0-20240129202741-052cc450c6cb
@@ -42,7 +44,6 @@ require (
 	github.com/Azure/go-ntlmssp v0.1.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.4.2 // indirect
 	github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible // indirect
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/Mzack9999/gcache v0.0.0-20230410081825-519e28eab057 // indirect
 	github.com/Mzack9999/go-http-digest-auth-client v0.6.1-0.20220414142836-eb8883508809 // indirect
@@ -256,7 +257,6 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.1 // indirect
-	github.com/minio/selfupdate v0.6.1-0.20230907112617-f11e74f84ca7 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/sys/atomicwriter v0.1.0 // indirect

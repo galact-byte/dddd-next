@@ -1,10 +1,12 @@
-- 支持通过 `.env` 中的 `FOFA_SERVER` 设置兼容 FOFA 协议的服务器地址，留空使用官方接口；仍需配置对应的邮箱和 Key。关联 [#1](https://github.com/galact-byte/dddd-next/issues/1)。
-- 测绘查询失败时显示错误原因，后续页失败仍保留已取得的资产继续扫描。
-- 恢复原版 `-t 文件` 用法，文件和直接目标统一使用 `-t`；支持 UTF-8 BOM 和 Windows 换行。
-- README 补充原版迁移对照、参数及默认行为差异，以及 FOFA 官方和自建配置示例。
+- 新增 `dddd upgrade` 升级程序本体，按当前系统和架构下载最新稳定版，校验 SHA-256 后替换；下载或校验失败保留原程序。
+- 使用 `dddd upgrade --check` 只检查是否有新版本。普通扫描不自动检查或下载本体更新。
+- `dddd update` 继续更新模板，已有模板更新后显示前后提交版本。`-nt` / `-nuclei-template` 在更新时指定并记住模板目录，在扫描时仅覆盖本次使用的目录。
+- 支持通过环境变量或 `.env` 配置 `GITHUB_TOKEN`，提高 GitHub API 请求限额；令牌不发送到下载地址或重定向目标。更新可使用 `HTTPS_PROXY` 环境变量。
 
 ## 升级说明
 
-`-tf` 已移除，请将旧脚本中的 `-tf targets.txt` 改为 `-t targets.txt`。文件路径以运行命令时的工作目录为准。
+v0.1.48 及更早版本需要先手动下载一次 v0.1.49，之后可使用 `dddd upgrade` 升级本体。更新子命令单独运行，不与扫描参数混用；程序目录须可写，升级后下次启动使用新版本。
 
-完整变更：[v0.1.47...v0.1.48](https://github.com/galact-byte/dddd-next/compare/v0.1.47...v0.1.48)
+原有 `dddd update`、`-up user:pass` 凭证参数和模板目录设置继续有效，无需修改旧脚本。
+
+完整变更：[v0.1.48...v0.1.49](https://github.com/galact-byte/dddd-next/compare/v0.1.48...v0.1.49)

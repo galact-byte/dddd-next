@@ -11,7 +11,7 @@ import (
 )
 
 func TestUpdateFlagsRejectUnknownAndAcceptTemplateDirectory(t *testing.T) {
-	for _, args := range [][]string{{"-nt", "custom templates"}, {"-nuclei-template", "custom templates"}} {
+	for _, args := range [][]string{{"-nt", "custom templates"}, {"-nuclei-template", "custom templates"}, {"--nt", "custom templates"}, {"--nuclei-template", "custom templates"}} {
 		got, err := parseUpdateArgs(args)
 		if err != nil || got != "custom templates" {
 			t.Fatalf("got %q, %v", got, err)
@@ -20,6 +20,15 @@ func TestUpdateFlagsRejectUnknownAndAcceptTemplateDirectory(t *testing.T) {
 	for _, args := range [][]string{{"-unknown"}, {"-nt"}, {"unexpected"}, {"-nt", " "}} {
 		if _, err := parseUpdateArgs(args); err == nil {
 			t.Fatalf("accepted %v", args)
+		}
+	}
+}
+
+func TestScanTemplateDirectoryShortAndLongFlags(t *testing.T) {
+	for _, flag := range []string{"-nt", "--nt", "-nuclei-template", "--nuclei-template"} {
+		cfg, err := config.ParseArgs([]string{"dddd", "-t", "example.com", flag, "custom templates"})
+		if err != nil || cfg.NucleiTemplateDir != "custom templates" {
+			t.Fatalf("%s: template directory = %q, %v", flag, cfg.NucleiTemplateDir, err)
 		}
 	}
 }

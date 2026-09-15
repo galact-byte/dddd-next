@@ -1,5 +1,47 @@
 # 修改记录 — dddd-next
 
+## 2026-09-16 — v0.1.49：本体升级子命令
+
+### 背景与目标
+
+- 补齐本体更新入口，参考 nuclei 的版本比较、平台资产选择与可回滚替换机制，适配本项目的单文件 Release。
+- 增加只读检查、强制 SHA-256 校验和正常 HTTPS 证书验证；直接查询本项目 GitHub Release，不接入 ProjectDiscovery 的版本统计服务。
+
+### 影响与兼容性
+
+- `dddd upgrade` 下载并替换当前程序；`dddd upgrade --check` 只检查稳定版本。子命令独立运行，不与扫描或模板参数混用；升级成功后下次启动使用新版。
+- `dddd update` 保持模板更新含义。`-nt` / `-nuclei-template` 更新时指定并记住目录，扫描时覆盖本次目录；目录参数支持单横杠或双横杠。模板变化时显示更新前后的提交版本。
+- 保留 `-up user:pass` 及长参数 `-username-password` 的凭证用途，无需迁移旧扫描脚本。
+- 本体更新只安装更高稳定版，不自动降级，不影响普通扫描的联网行为；沿用 HTTP_PROXY / HTTPS_PROXY / NO_PROXY，保留可执行文件路径和权限，跟随符号链接。
+- 可选通过环境变量或 `.env` 配置 `GITHUB_TOKEN` 提高 API 请求限额，仅在初始 Release API 请求携带令牌，下载和任何重定向均不携带。
+- 版本号更新为 v0.1.49，发布工作流保持不变；v0.1.48 及更早的发行版不具备新参数，首次升级须手动下载 v0.1.49 或更新版本。
+
+### 文件与实现
+
+| 操作 | 路径 | 说明 |
+| --- | --- | --- |
+| 新增 | `internal/updater/binary.go`、`binary_test.go` | Release 检查、平台资产与大小校验、校验和验证、替换及失败回归，含运行中程序自更新测试 |
+| 修改/新增 | `cmd/dddd/main.go`、`binary_update.go`、`binary_update_test.go`、`template_update_test.go` | 独立更新命令、取消/超时、帮助与退出码，验证更新及模板目录长短参数 |
+| 修改 | `internal/config/config.go`、`config_test.go` | 识别 upgrade 子命令，保留现有扫描参数 |
+| 修改 | `internal/updater/updater.go`、`updater_test.go` | 模板更新结果显示前后提交版本 |
+| 修改 | `go.mod` | 将已有 semver、minio/selfupdate 依赖提升为直接依赖，版本不变，无新增依赖 |
+| 修改 | `README.md`、`.env.example`、`release_note.md` | 新旧命令区别、版本范围、首次升级、令牌/代理和失败恢复说明 |
+
+### 验证
+
+- `go test ./...`、`go vet ./...`：通过。
+- `go test -race ./internal/updater -count=1`：通过；覆盖版本比较、只读检查、各平台资产命名、错误校验和、下载缺失/超长、HTTP 失败、TLS 证书/降级跳转拒绝、取消及替换失败保留原程序。
+- 新增令牌回归验证：匿名请求、鉴权 API、下载不携带令牌、同源/跨源重定向清除令牌均通过。
+- `TestBinaryUpdateRunningExecutable`：Windows 本机启动带空格且改名的测试程序，通过本机可信 HTTPS 下载并替换自身，再次运行替换后的文件成功。
+- 开发阶段的 Windows 构建通过，并成功查询真实 GitHub Release。另一次 API 返回 HTTP 403 时正确报错，前后程序 SHA-256 一致；运行中自更新成功链路通过本机 HTTPS 和子进程验证。
+- 最终 Windows 构建 `output/dddd-next_0.1.49_windows_amd64.exe` 的 `version`、`upgrade --help` 验证通过；通过仅传入子进程环境的 GitHub Token 执行 `upgrade --check`，成功报告当前 0.1.49、远端最新 0.1.48，未下载或降级。
+- Linux amd64、arm64 的 `go test -c ./internal/updater` 交叉编译通过；没有将交叉编译称为 Linux 实机测试。
+
+### 已知限制与后续
+
+- GitHub API 受网络访问和匿名限额影响，本体更新失败可使用 Release 手动下载；本次没有执行跨版本的真实 GitHub 下载替换，更新成功链路由本机 HTTPS 与真实子进程验证。
+- 校验和与程序来自同一 Release，用于完整性检查，不等同于独立签名。Windows 可能保留隐藏的 `.程序文件名.old`；原进程退出后可清理，下次更新也会尝试清理。
+
 ## 2026-09-15 — v0.1.48：统一目标输入与自定义 FOFA 服务器
 
 ### 背景与目标

@@ -55,7 +55,7 @@ func TestParseArgsTargetsFile(t *testing.T) {
 }
 
 func TestSubcommand(t *testing.T) {
-	for _, sub := range []string{"update", "version"} {
+	for _, sub := range []string{"update", "upgrade", "version"} {
 		t.Run(sub, func(t *testing.T) {
 			cfg, err := ParseArgs([]string{"dddd-next", sub})
 			if err != nil {
