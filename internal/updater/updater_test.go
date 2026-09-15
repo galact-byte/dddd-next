@@ -110,7 +110,7 @@ func TestPullExistingRepo(t *testing.T) {
 				return []byte("old111\n"), nil
 			}
 			return []byte("new222\n"), nil
-		case "pull --ff-only":
+		case "pull --ff-only --progress":
 			return []byte("ok"), nil
 		}
 		return nil, nil

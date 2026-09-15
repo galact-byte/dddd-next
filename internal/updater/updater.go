@@ -107,7 +107,7 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 		oldSHAOut, _ := u.runner.Run(ctx, src.Dir, "rev-parse", "HEAD")
 		oldSHA := strings.TrimSpace(string(oldSHAOut))
 
-		if _, err := u.runner.Run(ctx, src.Dir, "pull", "--ff-only"); err != nil {
+		if _, err := u.runWithProgress(ctx, src.Dir, "pull", "--ff-only", "--progress"); err != nil {
 			r.Action = ActionFailed
 			r.Err = fmt.Errorf("pull %s: %w", src.Name, err)
 			r.Duration = time.Since(start)
@@ -133,7 +133,7 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 		return r
 	}
 
-	args := []string{"clone"}
+	args := []string{"clone", "--progress"}
 	if src.Depth > 0 {
 		args = append(args, "--depth", strconv.Itoa(src.Depth))
 	}
@@ -143,7 +143,7 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 	args = append(args, src.URL, src.Dir)
 
 	fmt.Fprintf(u.progress, "[updater] cloning %s -> %s\n", src.Name, src.Dir)
-	if _, err := u.runner.Run(ctx, "", args...); err != nil {
+	if _, err := u.runWithProgress(ctx, "", args...); err != nil {
 		r.Action = ActionFailed
 		r.Err = err
 		r.Duration = time.Since(start)
@@ -155,6 +155,16 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 	r.Action = ActionCloned
 	r.Duration = time.Since(start)
 	return r
+}
+
+// Custom runners can opt into streaming without changing the GitRunner contract.
+func (u *Updater) runWithProgress(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	if runner, ok := u.runner.(interface {
+		RunWithProgress(context.Context, string, io.Writer, ...string) ([]byte, error)
+	}); ok {
+		return runner.RunWithProgress(ctx, dir, u.progress, args...)
+	}
+	return u.runner.Run(ctx, dir, args...)
 }
 
 // isGitRepo returns true when dir contains a .git entry. We accept both
