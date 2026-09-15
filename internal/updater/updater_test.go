@@ -12,9 +12,9 @@ import (
 
 // fakeRunner is a recording GitRunner used to assert the exec call shape.
 type fakeRunner struct {
-	calls    []fakeCall
+	calls     []fakeCall
 	responses map[string][]byte // key: joined args -> stdout
-	errOn    map[string]error  // key: joined args -> err
+	errOn     map[string]error  // key: joined args -> err
 }
 
 type fakeCall struct {
@@ -123,6 +123,9 @@ func TestPullExistingRepo(t *testing.T) {
 	}
 	if res[0].HeadSHA != "new222" {
 		t.Errorf("HeadSHA = %q", res[0].HeadSHA)
+	}
+	if summary := Summary(res); !strings.Contains(summary, "old111 -> new222") {
+		t.Fatalf("summary does not show template version change: %s", summary)
 	}
 }
 

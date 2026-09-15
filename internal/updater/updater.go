@@ -41,11 +41,12 @@ const (
 
 // Result captures the outcome of updating a single Source.
 type Result struct {
-	Source   Source
-	Action   Action
-	HeadSHA  string
-	Duration time.Duration
-	Err      error
+	Source      Source
+	Action      Action
+	HeadSHA     string
+	PreviousSHA string
+	Duration    time.Duration
+	Err         error
 }
 
 // Updater coordinates updates for an ordered list of sources.
@@ -106,6 +107,7 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 		fmt.Fprintf(u.progress, "[updater] pulling %s (%s)\n", src.Name, src.Dir)
 		oldSHAOut, _ := u.runner.Run(ctx, src.Dir, "rev-parse", "HEAD")
 		oldSHA := strings.TrimSpace(string(oldSHAOut))
+		r.PreviousSHA = oldSHA
 
 		if _, err := u.runWithProgress(ctx, src.Dir, "pull", "--ff-only", "--progress"); err != nil {
 			r.Action = ActionFailed
@@ -202,6 +204,13 @@ func Summary(results []Result) string {
 			sha := r.HeadSHA
 			if len(sha) > 8 {
 				sha = sha[:8]
+			}
+			if r.Action == ActionUpdated && r.PreviousSHA != "" {
+				previous := r.PreviousSHA
+				if len(previous) > 8 {
+					previous = previous[:8]
+				}
+				sha = previous + " -> " + sha
 			}
 			fmt.Fprintf(&b, "  [%-8s] %s @ %s (%s)\n", r.Action, r.Source.Name, sha, r.Duration.Round(time.Millisecond))
 		}

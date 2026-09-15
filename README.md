@@ -121,7 +121,7 @@ dddd-next/
 │   │   └── gopocs/              # 弱口令爆破
 │   ├── reporter/                # TXT / JSON / HTML 报告
 │   ├── audit/                   # 审计日志
-│   └── updater/                 # nuclei-templates 更新
+│   └── updater/                 # 本体自更新与 nuclei-templates 更新
 ├── pkg/
 │   └── fingerdsl/               # 指纹表达式 DSL（可独立复用）
 ├── configs/
@@ -186,6 +186,35 @@ go build -o dddd ./cmd/dddd
 ./dddd -t http://example.com -full
 ```
 
+### 更新本体与模板
+
+> 本体升级命令从 **v0.1.49** 起支持；v0.1.48 及更早的发行版仅支持 `dddd update` 更新模板。旧版需要先手动下载一次 v0.1.49 或更新版本，之后才能使用 `dddd upgrade` 升级本体。
+
+| 命令 | 行为 |
+| --- | --- |
+| `dddd upgrade` | 升级程序：下载对应平台的最新稳定版，校验 SHA-256 后替换当前程序 |
+| `dddd upgrade --check` | 只检查本体版本，不下载程序、不修改本地文件 |
+| `dddd update` | 刷新官方 nuclei 模板，保持原有含义，显示版本及是否有变化 |
+| `-nt <目录>` / `-nuclei-template <目录>` | 更新时指定并记住模板目录，扫描时仅覆盖本次使用的模板目录 |
+
+```bash
+./dddd upgrade --check
+./dddd upgrade
+./dddd update -nt /data/nuclei-templates
+./dddd -t http://example.com -nt /data/nuclei-templates
+
+# 指定模板目录的长参数写法等效
+./dddd update --nuclei-template /data/nuclei-templates
+```
+
+`-nt` / `-nuclei-template` 均接受单横杠或双横杠。更新子命令单独运行，不与扫描参数混用；`-up user:pass` 及其长参数 `-username-password` 继续表示自定义凭证。模板更新显示实际目录，已有模板发生变化时显示更新前后的提交版本；成功后记住指定目录，后续更新和扫描自动复用，扫描时指定另一目录仅对本次生效。本体与模板分别更新，普通扫描不自动检查或下载本体更新。
+
+本体更新直接访问本项目 GitHub Release，支持 Windows amd64、Linux amd64/arm64，无需安装 Git。可选配置 `GITHUB_TOKEN` 环境变量或在 `.env` 中填写 `GITHUB_TOKEN=你的令牌`，以提高 GitHub API 的请求限额；访问本公开仓库无需授予写权限。系统环境变量优先于工作目录 `.env`，再优先于程序目录 `.env`。令牌只发送到初始 Release API 请求，不发送到程序/校验和下载地址、任何重定向目标，也不写入日志。未配置时匿名访问；HTTP 401 通常需要检查令牌，403/429 还需检查限额或访问策略。
+
+只安装比当前版本更高的稳定版，不自动降级或安装预发布版。程序会显示当前版本、目标版本和实际替换路径；即使文件改名，仍更新当前正在运行的文件，符号链接启动时更新其指向的程序。更新后退出，下次运行使用新版本。
+
+下载通过 HTTPS 验证服务器证书，并按同一 Release 的 `checksums.txt` 检查文件完整性；这不等同于独立的发布签名。下载、校验或常规替换失败时保留原程序；若极端文件系统错误导致回滚也失败，会明确提示手动恢复。更新要求程序目录可写。Windows 可能保留一个隐藏的 `.程序文件名.old` 旧文件，下次更新会尝试清理；原进程退出后也可手动删除。
+
 ### FOFA 官方与自建接口
 
 > `FOFA_SERVER` 从 **v0.1.48** 起支持；v0.1.47 及更早版本无法通过此配置更换服务器。
@@ -244,9 +273,9 @@ Linux / macOS shell 可写为 `./dddd -fofa -t 'app="seeyon"' -fmc 100`。`FOFA_
 - Tomcat：Manager 路径探测和公开 Manager 检测。
 - Pikachu / sqli-labs / Vulfocus / WebGoat：产品路径、通用泄露类 POC、子路径登录页指纹和新版 WebGoat 入口。
 
-### 代理配置（拉取 nuclei-templates 慢/失败时）
+### 代理配置（更新下载慢或失败时）
 
-`dddd update` 内部调用系统 `git`，会自动读取 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量。
+`dddd update` 调用系统 `git` 更新模板；`dddd upgrade`（含 `--check`）通过 HTTPS 访问 GitHub。本体和模板更新均读取 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量（本体更新也遵循 `NO_PROXY`）；更新命令不接收扫描用的 `-proxy` 参数。
 
 ```bash
 # Windows CMD
