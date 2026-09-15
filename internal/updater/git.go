@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 )
@@ -19,7 +20,12 @@ type execRunner struct{}
 
 func newExecRunner() GitRunner { return execRunner{} }
 
-func (execRunner) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
+func (e execRunner) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return e.RunWithProgress(ctx, dir, nil, args...)
+}
+
+// RunWithProgress streams Git's stderr while retaining it for error reporting.
+func (execRunner) RunWithProgress(ctx context.Context, dir string, progress io.Writer, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -27,6 +33,9 @@ func (execRunner) Run(ctx context.Context, dir string, args ...string) ([]byte, 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if progress != nil {
+		cmd.Stderr = io.MultiWriter(&stderr, progress)
+	}
 	if err := cmd.Run(); err != nil {
 		return stdout.Bytes(), fmt.Errorf("git %s: %w (stderr: %s)",
 			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
