@@ -57,6 +57,20 @@
 
 常用旧参数已保留别名，但参数名兼容不代表默认行为、扫描引擎和配置文件格式完全一致。以下对照原 dddd 2.0.1；使用前可运行 `dddd -h` 查看当前帮助。
 
+### 帮助与兼容参数
+
+运行 `dddd help`、`dddd -h` 或 `dddd --help` 查看扫描参数；`dddd update --help` 和 `dddd upgrade --help` 查看对应子命令帮助。README 主要保留常用示例和迁移差异。
+
+> 从 **v0.1.50** 起，帮助按功能分组，只列实际生效的参数，并将有效别名放在同一行；显式使用下表参数时会向标准错误输出“已忽略”提示。v0.1.49 及更早发行版尚无这些提示，仍可能静默接受。
+
+| 仅为兼容保留的参数 | 当前行为 | 迁移方式 |
+|:---|:---|:---|
+| `-mp` / `-masscan-path` | 不调用外部 masscan | 删除该参数；需要 SYN 扫描时使用 `-st syn`，通过 `-sst` 设置发包速率 |
+| `-acf` / `-api-config-file` | 不读取旧版测绘 API YAML | 删除该参数，将密钥迁移到环境变量或 `.env`，参考 [.env.example](.env.example) |
+| `-log-level` | 接受原有级别值，但不会调整日志输出 | 删除该参数；当前尚不支持日志级别筛选 |
+
+这些参数不出现在常规 help 中；保留解析是为了让旧脚本继续运行。提示只显示参数名和迁移建议，不回显传入的值。`-Pn`、`-nip`、`-fy` 等仍生效的旧参数不属于此类。
+
 ### 目标输入
 
 目标输入统一使用 `-t`（保留原版长别名 `-target`）：输入为现有本地文件时逐行加载，否则按 IP、网段、域名、URL 或测绘语句处理。不再提供独立的 `-tf` 参数。
@@ -145,6 +159,11 @@ Linux:   ~/Downloads/dddd-next/configs
 ```bash
 # 构建
 go build -o dddd ./cmd/dddd
+
+# 查看扫描参数与更新命令帮助
+./dddd help
+./dddd update --help
+./dddd upgrade --help
 
 # 首次使用：拉取最新 nuclei-templates
 ./dddd update

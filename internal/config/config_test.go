@@ -3,8 +3,50 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestParseArgsIgnoredOptionsPreserveCompatibility(t *testing.T) {
+	cfg, err := ParseArgs([]string{
+		"dddd", "-t", "192.0.2.1",
+		"-mp", "old-path", "-mp", "new-path",
+		"-api-config-file=unused.yaml", "-log-level=info",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("ignored options should not block scanning: %v", err)
+	}
+	if cfg.MasscanPath != "new-path" || cfg.APIConfigFilePath != "unused.yaml" || cfg.LogLevel != "info" {
+		t.Fatal("legacy parsing no longer preserves option values")
+	}
+	if len(cfg.Warnings) != 3 {
+		t.Fatalf("Warnings = %v; want one per explicit ignored option, including explicit defaults", cfg.Warnings)
+	}
+	warnings := strings.Join(cfg.Warnings, "\n")
+	for _, name := range []string{"-mp", "-api-config-file", "-log-level"} {
+		if strings.Count(warnings, name+" 已忽略") != 1 {
+			t.Errorf("expected one warning for %s: %s", name, warnings)
+		}
+	}
+	for _, value := range []string{"old-path", "new-path", "unused.yaml", "info"} {
+		if strings.Contains(warnings, value) {
+			t.Errorf("warning contains option value %q", value)
+		}
+	}
+}
+
+func TestParseArgsDefaultsDoNotWarn(t *testing.T) {
+	cfg, err := ParseArgs([]string{"dddd", "-t", "192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("default values should not warn: %v", cfg.Warnings)
+	}
+}
 
 func TestParseArgsTargets(t *testing.T) {
 	cfg, err := ParseArgs([]string{"dddd-next", "-t", "192.168.1.1", "-t", "example.com"})

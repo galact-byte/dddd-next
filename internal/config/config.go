@@ -91,6 +91,7 @@ type Config struct {
 	MasscanPath            string
 
 	Subcommand string
+	Warnings   []string
 }
 
 func Defaults() Config {
@@ -280,6 +281,21 @@ func ParseArgs(args []string) (Config, error) {
 	if err := fs.Parse(args[1:]); err != nil {
 		return cfg, fmt.Errorf("config: parse flags: %w", err)
 	}
+
+	fs.Visit(func(f *flag.Flag) {
+		var reason string
+		switch f.Name {
+		case "mp", "masscan-path":
+			reason = "当前使用内置 SYN 扫描，不会调用 masscan；使用 -st syn 选择 SYN 扫描"
+		case "acf", "api-config-file":
+			reason = "不会加载旧版 API YAML；请通过环境变量或 .env 配置测绘 API"
+		case "log-level":
+			reason = "当前不支持调整日志级别"
+		default:
+			return
+		}
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("-%s 已忽略：%s", f.Name, reason))
+	})
 
 	if useHunter || useFofa || useQuake {
 		if useFofa {
