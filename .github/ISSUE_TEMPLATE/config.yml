@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用指南（参数、配置目录、测绘接口、代理）
+    url: https://github.com/galact-byte/dddd-next/blob/main/docs/usage.md
+    about: 提交问题前先看这里，多数用法和配置问题已有说明
+  - name: 从原版迁移指南
+    url: https://github.com/galact-byte/dddd-next/blob/main/docs/migration.md
+    about: 参数与默认行为差异、有效旧别名和仅兼容接收的参数
+  - name: 最新版本与发布说明
+    url: https://github.com/galact-byte/dddd-next/releases/latest
+    about: 确认问题是否已在新版本修复，或作为升级前的改动参考
+  - name: 文档有误或需要补充
+    url: https://github.com/galact-byte/dddd-next/issues/new?template=bug_report.yml
+    about: 通过 Bug 表单反馈文档错误、缺漏或描述不清，也欢迎直接提 PR

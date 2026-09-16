@@ -1,0 +1,60 @@
+name: 功能建议
+description: 希望新增能力，或改进现有参数、输出与行为
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索现有 issue，并确认 [README](https://github.com/galact-byte/dddd-next#readme) 和[使用指南](https://github.com/galact-byte/dddd-next/blob/main/docs/usage.md)中没有现成做法。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景
+      description: 你遇到的具体限制或不便，以及它出现的场景；先描述问题，不必急于给实现方案。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的方案
+      description: 希望增加的参数、开关、输出格式或行为变化，越具体越好。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 现有替代方案
+      description: 目前如何绕过这个限制；没有可以写「无」。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 相关模块
+      description: 可多选。
+      multiple: true
+      options:
+        - 目标输入与端口扫描
+        - 指纹识别
+        - Nuclei / GoPoC / Shiro 检测
+        - 测绘接口（FOFA / Hunter / Quake）
+        - 输出与报告
+        - 代理与网络配置
+        - 模板与本体更新
+        - 命令行帮助与文档
+        - 其他
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: 是否愿意提交 PR
+      options:
+        - label: 愿意自行实现该功能
+          required: false
