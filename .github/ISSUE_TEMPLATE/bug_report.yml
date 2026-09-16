@@ -1,5 +1,5 @@
-name: Bug 报告（含文档问题）
-description: 程序崩溃、报错、行为异常，或文档错误与缺漏
+name: Bug 报告
+description: 程序异常、检测误报或漏报，以及文档错误与缺漏
 title: "[Bug] "
 labels: ["bug"]
 body:
@@ -7,6 +7,19 @@ body:
     attributes:
       value: |
         提交前请先搜索现有 issue，确认问题尚未被报告。程序问题请尽量用最新 [Release](https://github.com/galact-byte/dddd-next/releases/latest) 复现；文档问题请提供当前 README 或使用指南的链接及错误位置，无需运行程序。
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 问题类型
+      options:
+        - 程序异常（崩溃、报错或流程不符合预期）
+        - 检测误报（指纹、POC 或路径判定有误）
+        - 检测漏报（应识别的产品或漏洞未报告）
+        - 文档错误或缺漏
+        - 其他问题
+    validations:
+      required: true
 
   - type: checkboxes
     id: preflight
@@ -44,7 +57,7 @@ body:
     id: command
     attributes:
       label: 复现命令或文档位置
-      description: 程序问题填写完整命令行；文档问题填写页面链接及错误位置。请删除凭证和敏感目标后再粘贴。
+      description: 程序或检测问题填写完整命令行，保留端口范围、`-poc` / `-tags` / `-full` 等筛选参数；文档问题填写页面链接及错误位置。请删除凭证和敏感目标后再粘贴。
       placeholder: ./dddd -t 192.168.1.1 -p 80,443；或 README「配置须知」的链接和问题描述
     validations:
       required: true
@@ -60,9 +73,18 @@ body:
     id: actual
     attributes:
       label: 实际行为或现有说明
-      description: 报错信息、异常输出、截图或有误的原文；日志请去掉无关行。
+      description: 报错信息、异常输出、截图或有误的原文。误报 / 漏报请补充能说明判定问题的关键响应或产品特征；注意脱敏，日志请去掉无关行。
     validations:
       required: true
+
+  - type: textarea
+    id: detection_details
+    attributes:
+      label: 检测信息（仅误报 / 漏报时填写）
+      description: 请填写指纹名或 POC ID、模板来源（官方 / 内置 legacy / 自定义）及版本；可使用 `dddd update` 显示的提交号。自定义指纹也请说明来源，不知道的项可填「未知」。
+      placeholder: POC ID：……；模板来源：官方 nuclei-templates；模板版本：……
+    validations:
+      required: false
 
   - type: textarea
     id: context
