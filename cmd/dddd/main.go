@@ -10,6 +10,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -23,7 +25,7 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.49"
+var appVersion = "0.1.50"
 
 func main() {
 	loadDotEnv()
@@ -54,6 +56,13 @@ func versionLine() string {
 
 func runScan(args []string) int {
 	cfg, err := config.ParseArgs(args)
+	if errors.Is(err, flag.ErrHelp) {
+		printHelp()
+		return 0
+	}
+	for _, warning := range cfg.Warnings {
+		fmt.Fprintln(os.Stderr, "[warn]", warning)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -167,119 +176,139 @@ func scanModeLabel(cfg config.Config) string {
 }
 
 func printHelp() {
-	fmt.Printf(`%s %s — automated asset surveying and vulnerability scanning.
+	fmt.Printf(`%s %s — 自动化资产探测与漏洞扫描。
 
-Usage:
-  dddd -t <target> [flags]              scan mode
-  dddd <subcommand>
+用法：
+  dddd -t <目标> [参数]
+  dddd <子命令>
+  dddd help | -h | --help
 
-Scan flags:
-  -t <target>     target (repeatable): IP / CIDR / Range / IP:Port / Domain / URL / search query / local file
-                 local file: one target per line (also accepts fscan "ip:port open" and dddd "[FP] ..." lines)
-  -o <file>       result output file (default result.txt)
-  -ot <text|json> output format (default text)
-  -ho <file>      HTML report file (empty disables)
-  -a              enable audit log (audit.log)
-  -alf <file>     audit log filename (default audit.log)
+同一行列出的参数互为别名，单横杠和双横杠均可使用。
 
-  -sd             enumerate subdomains for domain targets
-  -nsb            skip active subdomain brute-force
-  -ns             skip passive subdomain enumeration (subfinder)
-  -proxy <url>    HTTP/SOCKS5 proxy for outgoing requests
+目标与输出：
+  -t, -target <目标>                 可重复；IP / CIDR / IP 范围 / IP:端口 / 域名 / URL / 测绘语句 / 本地文件
+                                    文件每行一个目标，也支持 fscan "ip:port open" 和 dddd "[FP] ..." 行
+  -o, -output <文件>                 结果文件（默认 result.txt）
+  -ot, -output-type <text|json>       结果格式（默认 text）
+  -ho, -html-output <文件>            HTML 报告（默认 report.html，空字符串关闭）
+  -a                                开启审计日志
+  -alf, -audit-log-filename <文件>    审计日志文件名（默认 audit.log）
+                                    输出保存在 output/<时间戳>/ 下
 
-  -st <tcp|syn>   scan type: tcp (connect, default) | syn (requires npcap/admin)
-  -sst <n>        SYN scan packet rate (default 10000)
-  -p <ports>      port spec: "80,443,8000-8100" or "all" (default: curated)
-  -np <ports>     exclude specific ports (comma-separated)
-  -pmc <n>        max open ports per IP before dropping as firewalled (default 300)
-  -ping           ICMP-ping first, only scan responding hosts
-  -tp             TCP-connect liveness probe (use with or instead of -ping)
-  -skip-cdn       exclude CDN/WAF-fronted domains
-  -ac             allow scanning CDN assets (overrides -skip-cdn)
-  -no-dir         skip product-path probing (/nacos/, /druid/, ...)
-  -nhb            disable domain-bound (vhost) asset probing
-  -oip            pull recon assets as IP:Port instead of Domain:Port
-  -ld             keep recon assets that resolve to LAN/private IPs
-  -lpm            Hunter low-perception: fingerprint from Hunter's banner, no probe
-  -limit <n>      max assets per recon query (fofa/hunter/quake; 0 = 100)
+资产发现：
+  -sd, -subdomain                    枚举域名目标的子域名
+  -nsb, -no-subdomain-brute           跳过主动子域名字典爆破
+  -ns, -no-subfinder                 跳过被动子域名枚举
+  -ping                             先做 ICMP 存活探测，仅扫描响应主机（默认关闭）
+  -tp, -tcp-ping                     启用 TCP 存活探测，可与 -ping 同用
+  -Pn                               关闭主机存活预筛，覆盖 -ping 和 -tp
+  -nip, -no-icmp-ping                禁用 ICMP 存活探测，保留 -tp
+  -skip-cdn                         排除 CDN/WAF 域名（默认标记但继续探测）
+  -ac, -allow-cdn                    允许扫描 CDN 资产，覆盖 -skip-cdn
+  -no-dir, -nd                       跳过产品路径探测（/nacos/、/druid/ 等）
+  -nhb, -no-host-bind                关闭域名绑定（虚拟主机）资产探测
 
-  -nt <dir>      template directory for this scan (overrides remembered directory)
-  -nuclei-template <dir>  long alias for -nt
-  -full           run all nuclei templates instead of fingerprint-matched POCs
-  -no-general     skip the product-independent General-Poc set (precise mode)
-  -severity <s>   nuclei severity filter (repeatable: critical,high,medium,low,info)
-  -exclude-severity <s>  exclude nuclei severities (repeatable)
-  -tags <t>       nuclei template tags to include (repeatable)
-  -exclude-tags <t>  nuclei template tags to exclude (repeatable)
-  -poc <name>     fuzzy-match POC template by name/id substring
+端口扫描：
+  -st, -scan-type <tcp|syn>           TCP connect（默认）或 SYN；Windows SYN 需要 Npcap/管理员权限
+  -sst, -syn-scan-threads <数量>      SYN 发包速率（默认 10000）
+  -p, -port <端口>                   如 "80,443,8000-8100" 或 "all"；默认精选端口集
+  -np, -no-port <端口>               排除端口，逗号分隔
+  -pmc, -ports-max-count <数量>       单 IP 开放端口超过此值时视为防火墙干扰并丢弃（默认 300）
 
-  -no-brute       skip weak-credential brute-force (gopocs)
-  -no-poc         skip all POC/exploit checks (nuclei + shiro)
-  -ngp            skip gopocs weak-cred/crack checks only (nuclei+shiro still run)
-  -ni             disable interactsh OOB server
-  -iserver <url>  custom interactsh server URL
-  -itoken <t>     interactsh auth token
+测绘：
+  -fofa                             使用 FOFA
+  -hunter                           使用 Hunter
+  -quake                            使用 Quake（引擎开关可组合；未指定时使用三者）
+  -limit, -fmc, -fofa-max-count, -qmc, -quake-max-count <数量>
+                                    每条测绘语句的资产上限；上述别名共用一个值（0 表示 100）
+  -oip                              将测绘资产按 IP:端口导入，替代域名:端口
+  -ld, -local-domain                 保留解析到内网/私有 IP 的测绘资产
+  -lpm, -low-perception-mode         Hunter 低感知模式，基于 banner 识别指纹，跳过主动资产探测
+                                    后续漏洞检测仍可能发请求；仅收集资产时配合 -no-poc
+  -hps, -hunter-page-size <数量>      Hunter 低感知模式每页数量（0 表示 100）
+  -hmpc, -hunter-max-page-count <数量> Hunter 低感知模式最多页数（0 表示 10）
 
-  -up <user:pass> custom credential (repeatable; long alias: -username-password)
-  -upf <file>     custom credential file (user:pass per line)
+模板与配置：
+  -nt, -nuclei-template <目录>        本次扫描的模板目录，覆盖记住的目录
+  -fy, -finger-yaml <文件>            指纹 YAML
+  -wy, -workflow-yaml <文件>          指纹到 POC 的映射 YAML
+  -dy, -dir-yaml <文件>               产品路径探测 YAML
+  -swl, -subdomain-word-list <文件>   子域名字典
 
-  -tst <n>        TCP port scan threads (default 1000)
-  -pst <n>        TCP port scan timeout seconds (default 6)
-  -tc <n>         service detection threads (default 500)
-  -nto <n>        service detection timeout seconds (default 5)
-  -sbt <n>        subdomain brute-force threads (default 150)
-  -wt <n>         Web probe threads (default 200)
-  -wto <n>        Web probe timeout seconds (default 10)
-  -gpt <n>        GoPoC threads (default 50)
+漏洞检测：
+  -full                             运行全部 Nuclei 模板；默认按指纹精准匹配 POC
+  -no-general, -dgp, -disable-general-poc
+                                    精准模式跳过与产品无关的 General-Poc 集合
+  -severity, -s <级别>               Nuclei 严重度筛选，可重复：critical,high,medium,low,info
+  -exclude-severity <级别>           排除 Nuclei 严重度，可重复
+  -tags <标签>                       包含 Nuclei 模板标签，可重复
+  -exclude-tags, -et <标签>          排除 Nuclei 模板标签，可重复
+  -poc, -poc-name <名称>              按模板名称/ID 子串筛选 POC
+  -no-brute, -nb                     跳过 GoPoC 弱口令及协议检测，Shiro 检测仍可能执行
+  -no-poc, -npoc                     跳过全部 POC/漏洞检测
+  -ngp, -no-golang-poc               仅跳过 GoPoC 检测，Nuclei 和 Shiro 仍可能执行
+  -ni, -no-interactsh                禁用 Interactsh 带外检测
+  -iserver, -interactsh-server <URL>  自定义 Interactsh 服务器
+  -itoken, -interactsh-token <令牌>   Interactsh 认证令牌
+  -up, -username-password <用户:密码> 自定义凭证，可重复
+  -upf, -username-password-file <文件> 自定义凭证文件，每行 用户:密码
 
-  -pt             test proxy before use
-  -ptu <url>      proxy test URL (default https://www.baidu.com)
-  -log-level      debug | info | warn | error (default info)
+并发与超时：
+  -tst, -tcp-scan-threads <数量>      TCP 端口扫描并发（默认 1000）
+  -pst, -port-scan-timeout <秒>       TCP 端口扫描超时（默认 6）
+  -tc, -nmap-threads <数量>           服务识别并发（默认 500）
+  -nto, -nmap-timeout <秒>            服务识别超时（默认 5）
+  -sbt, -subdomain-brute-threads <数量> 子域名爆破并发（默认 150）
+  -wt, -web-threads <数量>            Web 探测并发（默认 200）
+  -wto, -web-timeout <秒>             Web 探测超时（默认 10）
+  -gpt, -golang-poc-threads <数量>     GoPoC 并发（默认 50）
 
-Subcommands (run separately from scan flags):
-  upgrade         Upgrade this executable to the latest stable release
-  upgrade --check Check for a newer executable without downloading it
-  update [-nt <dir>]  Update official nuclei templates; remember dir on success
-                     -nuclei-template is the long alias for -nt
-  version         Show version info
-  help            Show this help
+代理：
+  -proxy <URL>                       扫描使用的 HTTP/SOCKS5 代理
+  -pt, -proxy-test                   扫描前测试代理（默认关闭）
+  -ptu, -proxy-test-url <URL>         代理测试地址（默认 https://www.baidu.com）
+  更新和扫描也读取 HTTP_PROXY / HTTPS_PROXY 环境变量。
+  Windows CMD：        set HTTPS_PROXY=http://127.0.0.1:7890
+  Windows PowerShell： $env:HTTPS_PROXY="http://127.0.0.1:7890"
 
-Proxy:
-  Updates and scanners inherit HTTP_PROXY / HTTPS_PROXY from the environment.
-  GITHUB_TOKEN: optional token for executable update API requests (also via .env).
-  The token is not sent to asset downloads or redirect destinations.
-  Windows CMD:        set HTTPS_PROXY=http://127.0.0.1:7890
-  Windows PowerShell: $env:HTTPS_PROXY="http://127.0.0.1:7890"
+子命令（单独运行，不与扫描参数混用）：
+  upgrade                           升级程序到最新稳定版
+  upgrade --check                   只检查程序版本，不下载
+  update [-nt <目录>]               更新官方 Nuclei 模板，成功后记住目录
+                                    -nuclei-template 是 -nt 的别名
+  version, -v, --version             显示版本
+  help, -h, --help                   显示帮助
+  update --help / upgrade --help     查看对应子命令帮助
 
-Recon (search-query targets):
-  Queries like -t 'app="seeyon"' hit fofa/hunter/quake. Put API keys in a
-  .env file next to the binary (copy .env.example): FOFA_EMAIL + FOFA_KEY,
-  HUNTER_API_KEY, QUAKE_TOKEN. Free FOFA accounts have no API quota.
-  FOFA_SERVER: optional HTTP(S) base URL for a FOFA-compatible server;
-  empty uses https://fofa.info. Appends /api/v1/search/all (prefix paths allowed).
-  Keep FOFA_EMAIL + FOFA_KEY configured for the selected server.
+测绘 API 配置：
+  -t 'app="seeyon"' 等测绘语句使用 FOFA/Hunter/Quake。
+  将密钥放入环境变量或 .env（参考 .env.example）：
+  FOFA_EMAIL + FOFA_KEY、HUNTER_API_KEY、QUAKE_TOKEN。
+  进程环境变量优先，其次为工作目录 .env，再其次为程序目录 .env。
+  FOFA_SERVER 可指定兼容服务器的 HTTP(S) 基础地址，默认 https://fofa.info；
+  自动追加 /api/v1/search/all，允许路径前缀，仍需配置 FOFA_EMAIL 和 FOFA_KEY。
+  免费 FOFA 账号没有 API 配额。
 
-Configs:
-  Release binaries include baseline configs. If no configs/ exists next to the
-  binary or in the working directory, dddd-next writes them to
-  ~/Downloads/dddd-next/configs and uses that directory. Put configs/ next to
-  the binary to override or customize them.
-  Use `+"`dddd update -nt <dir>`"+` to select and remember a template directory.
-  Later updates and scans reuse it; scan -nt overrides it for that run only.
-  The directory is stored in the user config directory under dddd-next/templates.json.
+配置目录与更新：
+  发行版内置基础配置，优先使用程序同目录、其次工作目录中的 configs/；
+  均不存在时释放并使用 ~/Downloads/dddd-next/configs。
+  dddd update -nt <目录> 成功后记住目录，后续更新和扫描复用；扫描 -nt 仅覆盖本次。
+  目录记录保存在用户配置目录的 dddd-next/templates.json。
+  GITHUB_TOKEN 可选，用于程序更新 API 请求（也可通过 .env 配置），
+  不会发送给资产下载地址或重定向目标。
 
-Vulnerability scan (nuclei):
-  Default precise mode runs only the POCs a target's fingerprints map to
-  (configs/pocs/mapping.yaml) plus a general POC set — not all 13000+ templates.
-  -full scans every template; -no-general drops the general set.
-
-Inspired by SleepingBag945/dddd (MIT License).
+基于 SleepingBag945/dddd（MIT License）。
 `, appName, appVersion)
 }
 
 func runUpdate(args []string) int {
 	dir, err := parseUpdateArgs(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(os.Stderr, "Usage: dddd update [-nt <template-directory>]")
+			fmt.Fprintln(os.Stderr, "  -nt, -nuclei-template <目录>  更新官方模板，成功后记住目录")
+			return 0
+		}
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, "Usage: dddd update [-nt <template-directory>]")
 		return 2
