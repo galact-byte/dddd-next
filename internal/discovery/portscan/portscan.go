@@ -92,6 +92,34 @@ type Result struct {
 	Port int
 }
 
+// DetectContiguousRuns counts unique ports in long consecutive blocks per host.
+// Port layout alone cannot distinguish real services from a responding proxy.
+// This is diagnostic only: it never removes or reorders observed results.
+// minRun <= 0 disables the diagnostic.
+func DetectContiguousRuns(results []Result, minRun int) map[string]int {
+	if minRun <= 0 {
+		return nil
+	}
+	portsByHost := make(map[string][]int)
+	for _, r := range results {
+		portsByHost[r.Host] = append(portsByHost[r.Host], r.Port)
+	}
+	observed := make(map[string]int)
+	for host, ports := range portsByHost {
+		ports = dedupSortPorts(ports)
+		runStart := 0
+		for i := 1; i <= len(ports); i++ {
+			if i == len(ports) || ports[i] != ports[i-1]+1 {
+				if i-runStart >= minRun {
+					observed[host] += i - runStart
+				}
+				runStart = i
+			}
+		}
+	}
+	return observed
+}
+
 // Options configures a Scanner; zero values fall back to safe defaults.
 type Options struct {
 	Ports          []int

@@ -141,6 +141,12 @@ func (c *Client) queryPage(ctx context.Context, query string, page int) ([]apiIt
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// net/http wraps transport errors in url.Error, including the query key.
+		// Keep the underlying cause (including cancellation), without the URL.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return nil, 0, fmt.Errorf("hunter: request: %w", err)
 	}
 	defer resp.Body.Close()

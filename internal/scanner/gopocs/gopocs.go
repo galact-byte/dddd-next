@@ -303,9 +303,26 @@ func (e *Engine) toFinding(j job, cred Credential) types.Finding {
 		Severity:     types.SeverityHigh,
 		Target:       net.JoinHostPort(j.ep.Host, strconv.Itoa(j.ep.Port)),
 		Description:  fmt.Sprintf("%s accepts weak credential %q", j.service, login),
+		Detail:       credentialDetail(cred),
 		Tags:         []string{"weak-cred", j.service},
 		DiscoveredAt: time.Now(),
 	}
+}
+
+// credentialDetail renders a verified credential as a compact terminal summary.
+// A password-only service (e.g. redis) omits the username field; an empty
+// password is shown explicitly so operators don't mistake it for a formatting
+// glitch — a blank-password login is itself the finding.
+func credentialDetail(cred Credential) string {
+	var b strings.Builder
+	if cred.User != "" {
+		fmt.Fprintf(&b, "username=%q ", cred.User)
+	}
+	fmt.Fprintf(&b, "password=%q", cred.Pass)
+	if cred.Pass == "" {
+		b.WriteString("（空密码）")
+	}
+	return b.String()
 }
 
 // ParseDict reads a credential dictionary. Lines containing " : " split into

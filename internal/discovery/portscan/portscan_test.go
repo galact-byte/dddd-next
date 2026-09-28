@@ -3,8 +3,66 @@ package portscan
 import (
 	"context"
 	"net"
+	"reflect"
 	"testing"
 )
+
+func TestDetectContiguousRuns(t *testing.T) {
+	// Continuous TCP responses are suspicious, not proof that services are fake.
+	var results []Result
+	for _, p := range []int{22, 80, 443} {
+		results = append(results, Result{Host: "10.0.0.1", Port: p})
+	}
+	for p := 12000; p <= 13000; p++ {
+		results = append(results, Result{Host: "10.0.0.1", Port: p})
+	}
+	// A second host with only scattered real services.
+	for _, p := range []int{25, 110, 143} {
+		results = append(results, Result{Host: "10.0.0.2", Port: p})
+	}
+
+	before := append([]Result(nil), results...)
+	observed := DetectContiguousRuns(results, 100)
+	if observed["10.0.0.1"] != 1001 || observed["10.0.0.2"] != 0 {
+		t.Fatalf("contiguous observations = %v, want only host1:1001", observed)
+	}
+	if !reflect.DeepEqual(results, before) {
+		t.Fatal("anomaly detection changed observed ports or their order")
+	}
+}
+
+func TestDetectContiguousRunsBoundary(t *testing.T) {
+	mk := func(host string, lo, hi int) []Result {
+		var rs []Result
+		for p := lo; p <= hi; p++ {
+			rs = append(rs, Result{Host: host, Port: p})
+		}
+		return rs
+	}
+	if got := DetectContiguousRuns(mk("h", 1000, 1099), 100)["h"]; got != 100 {
+		t.Errorf("run of exactly 100 should flag 100, got %d", got)
+	}
+	if got := DetectContiguousRuns(mk("h", 1000, 1098), 100)["h"]; got != 0 {
+		t.Errorf("run of 99 should not be flagged, got %d", got)
+	}
+	rs := mk("h", 1000, 1099)
+	rs = append(rs, Result{Host: "h", Port: 1050})
+	if got := DetectContiguousRuns(rs, 100)["h"]; got != 100 {
+		t.Errorf("duplicate observation split or inflated the run: %d", got)
+	}
+}
+
+func TestDetectContiguousRunsDisabled(t *testing.T) {
+	rs := []Result{{Host: "h", Port: 1}, {Host: "h", Port: 2}}
+	for _, threshold := range []int{0, -1} {
+		if got := DetectContiguousRuns(rs, threshold); len(got) != 0 {
+			t.Errorf("threshold %d should disable warnings, got %v", threshold, got)
+		}
+	}
+	if got := DetectContiguousRuns(nil, 100); len(got) != 0 {
+		t.Fatalf("empty input: %v", got)
+	}
+}
 
 func TestParsePortSpec(t *testing.T) {
 	if got, err := ParsePortSpec(""); err != nil || got != nil {

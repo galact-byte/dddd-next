@@ -95,12 +95,17 @@ type Fingerprint struct {
 
 // Finding is a vulnerability or weak-credential discovery.
 type Finding struct {
-	ID           string
-	Name         string
-	Severity     Severity
-	Target       string
-	Template     string
-	Description  string
+	ID          string
+	Name        string
+	Severity    Severity
+	Target      string
+	Template    string
+	Description string
+	// Detail is a compact, already-verified summary of the key result — cracked
+	// credentials, an extractor hit, a Shiro key/mode — meant for the terminal so
+	// operators see the payoff without opening the report. It carries only
+	// confirmed values, never guesses; full evidence stays in Request/Response.
+	Detail       string
 	References   []string
 	Request      string
 	Response     string

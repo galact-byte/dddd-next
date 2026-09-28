@@ -3,6 +3,8 @@ package reporter
 import (
 	"fmt"
 	"html/template"
+	"net"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -46,17 +48,17 @@ func (r *HTMLReporter) WriteFinding(f types.Finding) error {
 }
 
 type htmlPayload struct {
-	GeneratedAt          time.Time
-	GeneratedAtText      string
-	Findings             []htmlFinding
-	FindingsBySeverity   []htmlSeverityGroup
-	FingerprintTargets   []htmlFingerprintTarget
-	SeverityStats        []htmlSeverityStat
-	TotalFindings        int
-	TotalFingerprints    int
-	TotalTargets         int
-	HasCriticalFindings  bool
-	HasHighFindings      bool
+	GeneratedAt         time.Time
+	GeneratedAtText     string
+	Findings            []htmlFinding
+	FindingsBySeverity  []htmlSeverityGroup
+	FingerprintTargets  []htmlFingerprintTarget
+	SeverityStats       []htmlSeverityStat
+	TotalFindings       int
+	TotalFingerprints   int
+	TotalTargets        int
+	HasCriticalFindings bool
+	HasHighFindings     bool
 }
 
 type htmlSeverityGroup struct {
@@ -81,6 +83,7 @@ type htmlFinding struct {
 	Target        string
 	Template      string
 	Description   string
+	Detail        string
 	References    []string
 	Request       string
 	Response      string
@@ -90,10 +93,12 @@ type htmlFinding struct {
 	CVSS          string
 	Tags          string
 	DiscoveredAt  string
+	CopyButtons   []htmlCopyButton
 }
 
 type htmlFingerprintTarget struct {
 	Target       string
+	CopyButtons  []htmlCopyButton
 	Fingerprints []htmlFingerprint
 }
 
@@ -128,6 +133,51 @@ func (r *HTMLReporter) Close() error {
 	return nil
 }
 
+// htmlCopyButton is one copy affordance rendered next to a target: a label and
+// the exact value placed on the clipboard.
+type htmlCopyButton struct {
+	Label string
+	Value string
+}
+
+// copyButtonsFor returns the single copy button for a target string. IP-based
+// targets (bare IP or ip:port or http://ip...) yield "复制IP" carrying just the
+// bare IP — the useful identity for tooling. Domain/URL targets yield "复制地址"
+// carrying the full value verbatim (scheme, port, path, query preserved). We
+// never resolve DNS, so a domain never produces a fabricated IP.
+func copyButtonsFor(raw string) []htmlCopyButton {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	ipCandidate := extractCopyHost(raw)
+	if ipCandidate == "" {
+		ipCandidate = raw
+	}
+	if net.ParseIP(ipCandidate) != nil {
+		return []htmlCopyButton{{Label: "复制IP", Value: ipCandidate}}
+	}
+	return []htmlCopyButton{{Label: "复制地址", Value: raw}}
+}
+
+// extractCopyHost pulls the bare host out of a URL or host:port. It returns ""
+// when the value is already a bare host/IP (nothing to strip).
+func extractCopyHost(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if strings.Contains(s, "://") {
+		if u, err := url.Parse(s); err == nil && u.Hostname() != "" {
+			return u.Hostname()
+		}
+	}
+	if h, _, err := net.SplitHostPort(s); err == nil && h != "" {
+		return h
+	}
+	return ""
+}
+
 func buildHTMLPayload(generatedAt time.Time, findings []types.Finding, fps map[string][]types.Fingerprint) htmlPayload {
 	counts := make(map[string]int)
 	outFindings := make([]htmlFinding, 0, len(findings))
@@ -147,6 +197,7 @@ func buildHTMLPayload(generatedAt time.Time, findings []types.Finding, fps map[s
 			Target:        f.Target,
 			Template:      f.Template,
 			Description:   f.Description,
+			Detail:        f.Detail,
 			References:    append([]string(nil), f.References...),
 			Request:       f.Request,
 			Response:      f.Response,
@@ -154,6 +205,7 @@ func buildHTMLPayload(generatedAt time.Time, findings []types.Finding, fps map[s
 			ResponseID:    fmt.Sprintf("response-%d", i+1),
 			HasHTTP:       f.Request != "" || f.Response != "",
 			Tags:          strings.Join(f.Tags, ", "),
+			CopyButtons:   copyButtonsFor(f.Target),
 		}
 		if f.CVSS > 0 {
 			hf.CVSS = fmt.Sprintf("%.1f", f.CVSS)
@@ -182,7 +234,8 @@ func buildHTMLPayload(generatedAt time.Time, findings []types.Finding, fps map[s
 			})
 			totalFP++
 		}
-		fpTargets = append(fpTargets, htmlFingerprintTarget{Target: target, Fingerprints: items})
+		fpt := htmlFingerprintTarget{Target: target, Fingerprints: items, CopyButtons: copyButtonsFor(target)}
+		fpTargets = append(fpTargets, fpt)
 	}
 
 	stats := make([]htmlSeverityStat, 0, 6)
@@ -430,6 +483,27 @@ const htmlTpl = `<!doctype html>
     overflow: hidden;
   }
   .finding-card[hidden] { display: none; }
+  .finding-head {
+    display: flex;
+    align-items: stretch;
+    background: var(--panel-2);
+  }
+  .finding-head .finding-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .finding-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+  .fp-actions {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: 8px;
+  }
   .finding-critical { border-left: 4px solid var(--critical); }
   .finding-high { border-left: 4px solid var(--high); }
   .finding-medium { border-left: 4px solid var(--medium); }
@@ -574,6 +648,16 @@ const htmlTpl = `<!doctype html>
   .copy-btn:hover {
     border-color: var(--brand);
   }
+  .copy-target {
+    min-height: 0;
+    padding: 2px 8px;
+    font-size: 12px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .copy-value {
+    word-break: break-all;
+  }
   pre {
     margin: 0;
     padding: 12px 12px 12px 52px;
@@ -585,6 +669,9 @@ const htmlTpl = `<!doctype html>
     overflow-wrap: anywhere;
     counter-reset: line;
     position: relative;
+  }
+  .finding-detail {
+    padding: 12px 0;
   }
   pre > span.line {
     display: block;
@@ -773,13 +860,21 @@ document.addEventListener('DOMContentLoaded', function () {
   window.copyText = function (id) {
     const el = document.getElementById(id);
     if (!el) return;
-    const text = el.textContent || '';
+    doCopy(el.textContent || '');
+  };
+
+  window.copyValue = function (btn) {
+    if (!btn) return;
+    doCopy(btn.getAttribute('data-copy') || '');
+  };
+
+  function doCopy(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(function () { showToast('已复制'); }, function () { fallbackCopy(text); });
       return;
     }
     fallbackCopy(text);
-  };
+  }
 
   function fallbackCopy(text) {
     const area = document.createElement('textarea');
@@ -790,10 +885,10 @@ document.addEventListener('DOMContentLoaded', function () {
     document.body.appendChild(area);
     area.select();
     try {
-      document.execCommand('copy');
-      showToast('已复制');
+      const ok = document.execCommand('copy');
+      showToast(ok ? '已复制' : '复制失败，请手动选择复制');
     } catch (e) {
-      showToast('复制失败');
+      showToast('复制失败，请手动选择复制');
     }
     document.body.removeChild(area);
   }
@@ -862,6 +957,7 @@ document.addEventListener('DOMContentLoaded', function () {
     <div class="finding-list">
       {{range .Findings}}
       <article class="finding-card finding-{{.Severity}}" data-severity="{{.Severity}}">
+        <div class="finding-head">
         <button type="button" class="finding-summary" aria-expanded="false">
           <span class="finding-index">{{.Index}}</span>
           <span class="finding-title">
@@ -873,10 +969,13 @@ document.addEventListener('DOMContentLoaded', function () {
             {{if .ID}}<span>{{.ID}}</span>{{end}}
           </span>
         </button>
+        {{if .CopyButtons}}<div class="finding-actions">{{range .CopyButtons}}<button type="button" class="copy-btn copy-target" data-copy="{{.Value}}" onclick="copyValue(this)">{{.Label}}</button>{{end}}</div>{{end}}
+        </div>
         <div class="finding-body">
           <div class="detail-grid">
             <div class="detail-block">
               <div class="detail-label">漏洞描述</div>
+              {{if .Detail}}<h4>关键结果</h4><pre class="finding-detail">{{.Detail}}</pre>{{end}}
               {{if .Description}}<p class="description">{{.Description}}</p>{{else}}<p class="description">暂无描述。</p>{{end}}
             </div>
             <div class="detail-block">
@@ -932,7 +1031,7 @@ document.addEventListener('DOMContentLoaded', function () {
     <div class="fingerprint-panel">
       {{range .FingerprintTargets}}
       <div class="fp-row">
-        <div class="fp-target">{{.Target}}</div>
+        <div class="fp-target"><span class="copy-value">{{.Target}}</span>{{if .CopyButtons}} <span class="fp-actions">{{range .CopyButtons}}<button type="button" class="copy-btn copy-target" data-copy="{{.Value}}" onclick="copyValue(this)">{{.Label}}</button>{{end}}</span>{{end}}</div>
         <div class="fp-tags">
           {{range .Fingerprints}}
           <span class="fp-tag">{{.Name}}{{if .Source}} · {{.Source}}{{end}}{{if .Confidence}} · {{.Confidence}}{{end}}</span>

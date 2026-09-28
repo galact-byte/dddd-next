@@ -14,10 +14,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/httpx/runner"
+	urlutil "github.com/projectdiscovery/utils/url"
 
 	"dddd-next/pkg/fingerdsl"
 )
@@ -84,19 +84,27 @@ func New(opts Options) *Probe {
 }
 
 // Run starts the scan and returns a channel of responses. The channel
-// closes when the scan finishes or ctx is cancelled.
+// closes after the scan drains. Cancellation stops dispatching new targets;
+// already dispatched requests finish within the configured request timeout.
 //
 // Failed probes (no HTTP response) are dropped silently. Callers that
 // want them can flip a future Options.IncludeFailed switch.
 func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(p.opts.Targets) == 0 {
 		return nil, errors.New("httpprobe: no targets")
 	}
 
+	targets, origins, err := p.expandPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make(chan Response, 128)
 
 	runnerOpts := runner.Options{
-		InputTargetHost: goflags.StringSlice(p.opts.Targets),
+		InputTargetHost: goflags.StringSlice(targets),
 		Methods:         p.opts.Methods,
 		Threads:         p.opts.Threads,
 		Timeout:         p.opts.TimeoutSeconds,
@@ -114,10 +122,13 @@ func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 		// httpx fills Result.ResponseBody / RawHeaders only when this is set
 		// (runner.go ~2174); without it, body= and header= fingerprints never hit.
 		ResponseInStdout: true,
-		RequestURIs:      strings.Join(p.opts.RequestPaths, ","),
+		Favicon:          true,
 		OnResult: func(r runner.Result) {
-			if r.Failed {
+			if r.Failed || ctx.Err() != nil {
 				return
+			}
+			if original, ok := origins[r.Input]; ok {
+				r.Input = original
 			}
 			select {
 			case <-ctx.Done():
@@ -132,13 +143,47 @@ func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 		return nil, fmt.Errorf("httpprobe: create runner: %w", err)
 	}
 
+	stopInterrupt := context.AfterFunc(ctx, r.Interrupt)
 	go func() {
 		defer close(out)
 		defer r.Close()
-		r.RunEnumeration()
+		defer stopInterrupt()
+		if ctx.Err() == nil {
+			r.RunEnumeration()
+		}
 	}()
 
 	return out, nil
+}
+
+// expandPaths makes each product path a schedulable item: httpx checks its
+// interrupt channel between targets, but not inside its RequestURIs loop.
+// Use httpx's own URL merger to preserve path/query semantics.
+func (p *Probe) expandPaths(ctx context.Context) ([]string, map[string]string, error) {
+	if len(p.opts.RequestPaths) == 0 {
+		return p.opts.Targets, nil, nil
+	}
+	var targets []string
+	origins := make(map[string]string)
+	for _, target := range p.opts.Targets {
+		base, err := urlutil.Parse(target)
+		if err != nil {
+			return nil, nil, fmt.Errorf("httpprobe: target: %w", err)
+		}
+		for _, path := range p.opts.RequestPaths {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+			u := base.Clone()
+			if err := u.MergePath(path, false); err != nil {
+				return nil, nil, fmt.Errorf("httpprobe: path: %w", err)
+			}
+			input := u.String()
+			targets = append(targets, input)
+			origins[input] = target
+		}
+	}
+	return targets, origins, nil
 }
 
 // toResponse maps httpx's verbose Result into our narrower type.

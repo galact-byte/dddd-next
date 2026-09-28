@@ -6,7 +6,6 @@
 package telnetlib
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -51,6 +50,8 @@ type Client struct {
 	dialTimeout  time.Duration
 	mu           sync.Mutex // guards lastResponse against the reader goroutine
 	lastResponse string
+	parseState   byte   // owned by the reader; retained across TCP read boundaries
+	command      []byte // only the option and first subnegotiation byte are needed
 }
 
 func New(addr string, port int, dialTimeout time.Duration) *Client {
@@ -144,36 +145,59 @@ func (c *Client) write(buf []byte) error {
 // serializeResponse splits a raw read into display text and the IAC command
 // sequences that need a reply.
 func (c *Client) serializeResponse(responseBuf []byte) (displayBuf []byte, commandList [][]byte) {
-	for {
-		index := bytes.IndexByte(responseBuf, IAC)
-		if index == -1 {
-			displayBuf = append(displayBuf, responseBuf...)
-			break
+	const (
+		text = iota
+		command
+		option
+		subnegotiation
+		subnegotiationIAC
+	)
+	for _, b := range responseBuf {
+		switch c.parseState {
+		case text:
+			if b == IAC {
+				c.parseState = command
+			} else {
+				displayBuf = append(displayBuf, b)
+			}
+		case command:
+			switch b {
+			case IAC:
+				displayBuf = append(displayBuf, IAC)
+				c.parseState = text
+			case DO, DONT, WILL, WONT:
+				c.command = []byte{IAC, b}
+				c.parseState = option
+			case SB:
+				c.command = []byte{IAC, SB}
+				c.parseState = subnegotiation
+			default:
+				c.parseState = text
+			}
+		case option:
+			c.command = append(c.command, b)
+			commandList = append(commandList, c.command)
+			c.command = nil
+			c.parseState = text
+		case subnegotiation:
+			if b == IAC {
+				c.parseState = subnegotiationIAC
+			} else if len(c.command) < 4 {
+				// Bound memory even when a peer never terminates its frame.
+				c.command = append(c.command, b)
+			}
+		case subnegotiationIAC:
+			if b == SE {
+				commandList = append(commandList, c.command)
+				c.command = nil
+				c.parseState = text
+			} else {
+				if b == IAC && len(c.command) < 4 {
+					c.command = append(c.command, IAC)
+				}
+				c.parseState = subnegotiation
+			}
 		}
-		if len(responseBuf)-index < 2 {
-			displayBuf = append(displayBuf, responseBuf...)
-			break
-		}
-		ch := responseBuf[index+1]
-		if ch == IAC {
-			displayBuf = append(displayBuf, responseBuf[:index]...)
-			responseBuf = responseBuf[index+1:]
-			continue
-		}
-		if ch == DO || ch == DONT || ch == WILL || ch == WONT {
-			commandList = append(commandList, responseBuf[index:index+3])
-			displayBuf = append(displayBuf, responseBuf[:index]...)
-			responseBuf = responseBuf[index+3:]
-			continue
-		}
-		if ch == SB {
-			displayBuf = append(displayBuf, responseBuf[:index]...)
-			seIndex := bytes.IndexByte(responseBuf, SE)
-			commandList = append(commandList, responseBuf[index:seIndex])
-			responseBuf = responseBuf[seIndex+1:]
-			continue
-		}
-		break
 	}
 	return displayBuf, commandList
 }
@@ -207,7 +231,7 @@ func (c *Client) makeReply(command []byte) []byte {
 		case WONT:
 			return []byte{IAC, DONT, option}
 		case SB:
-			if command[3] == ECHO {
+			if len(command) > 3 && command[3] == ECHO {
 				return []byte{IAC, SB, option, BINARY, IAC, SE}
 			}
 		}

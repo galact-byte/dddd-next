@@ -12,3 +12,6 @@
 *.txt text eol=lf
 *.csv text eol=lf
 *.json text eol=lf
+
+/third_party/httpx/** text=auto eol=lf
+/third_party/httpx-ratelimiter.patch text eol=lf -whitespace

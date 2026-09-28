@@ -50,6 +50,12 @@ func (r *TextReporter) WriteFinding(f types.Finding) error {
 	if detail == "" {
 		detail = f.Description
 	}
+	if f.Detail != "" {
+		if detail != "" {
+			detail += " | "
+		}
+		detail += f.Detail
+	}
 	_, err := fmt.Fprintf(r.w, "%s %s | %s | %s\n", severityTag(f.Severity), f.Target, f.Name, detail)
 	if err != nil {
 		return err

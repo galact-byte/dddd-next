@@ -31,7 +31,6 @@ import (
 	nucleilib "github.com/projectdiscovery/nuclei/v3/lib"
 	nucleiconfig "github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	pkgtypes "github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
 
 // Options configures a Scanner. Use DefaultOptions() for safe baseline values.
@@ -253,11 +252,18 @@ func buildSDKOptions(o Options) []nucleilib.NucleiSDKOptions {
 	}))
 
 	if o.NoInteractsh || o.InteractshServer != "" || o.InteractshToken != "" {
-		opts = append(opts, nucleilib.WithOptions(&pkgtypes.Options{
-			NoInteractsh:    o.NoInteractsh,
-			InteractshURL:   o.InteractshServer,
-			InteractshToken: o.InteractshToken,
-		}))
+		opts = append(opts, func(e *nucleilib.NucleiEngine) error {
+			// Mutate only these fields; WithOptions replaces the whole SDK config.
+			config := e.Options()
+			config.NoInteractsh = o.NoInteractsh
+			if o.InteractshServer != "" {
+				config.InteractshURL = o.InteractshServer
+			}
+			if o.InteractshToken != "" {
+				config.InteractshToken = o.InteractshToken
+			}
+			return nil
+		})
 	}
 
 	if o.DisableUpdate {
@@ -309,12 +315,27 @@ func toFinding(ev *output.ResultEvent) types.Finding {
 		Target:       pickTarget(ev),
 		Template:     ev.Template,
 		Description:  ev.Info.Description,
+		Detail:       extractedDetail(ev.ExtractedResults),
 		References:   refs,
 		Request:      ev.Request,
 		Response:     ev.Response,
 		Tags:         sliceCopy(ev.Info.Tags.ToSlice()),
 		DiscoveredAt: ev.Timestamp,
 	}
+}
+
+// extractedDetail joins a nuclei template's extractor hits into a compact
+// terminal summary. These are the values a template deliberately pulled out
+// (tokens, versions, leaked identifiers), so they are the payoff worth showing
+// inline; when a template extracts nothing the detail is empty.
+func extractedDetail(results []string) string {
+	var parts []string
+	for _, r := range results {
+		if r = strings.TrimSpace(r); r != "" {
+			parts = append(parts, r)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // pickTarget chooses the most specific identifier for where the match landed.

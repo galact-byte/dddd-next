@@ -25,7 +25,7 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.50"
+var appVersion = "0.1.51"
 
 func main() {
 	loadDotEnv()
@@ -100,10 +100,11 @@ func runScan(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	defer pipeline.Close()
 
 	fmt.Printf("\x1b[32m[*]\x1b[0m %d target(s)  ·  %s  ·  output -> %s\n", len(cfg.Targets), scanModeLabel(cfg), outDir)
-	if err := pipeline.Run(ctx); err != nil {
+	runErr := pipeline.Run(ctx)
+	closeErr := pipeline.Close()
+	if err := errors.Join(runErr, closeErr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -213,7 +214,8 @@ func printHelp() {
   -sst, -syn-scan-threads <数量>      SYN 发包速率（默认 10000）
   -p, -port <端口>                   如 "80,443,8000-8100" 或 "all"；默认精选端口集
   -np, -no-port <端口>               排除端口，逗号分隔
-  -pmc, -ports-max-count <数量>       单 IP 开放端口超过此值时视为防火墙干扰并丢弃（默认 300）
+  -pmc, -ports-max-count <数量>       单 IP 开放端口超量告警阈值，保留全部结果（默认 300，0 关闭告警）
+  -fwr, -firewall-run-len <数量>      连续开放端口段告警阈值，保留全部结果（默认 100，0 关闭告警）
 
 测绘：
   -fofa                             使用 FOFA

@@ -53,6 +53,9 @@ func TestScanFindsWeakKey(t *testing.T) {
 	if f.Severity != types.SeverityCritical || !strings.Contains(f.Description, testKey) {
 		t.Errorf("finding = %+v, want critical mentioning %s", f, testKey)
 	}
+	if !strings.Contains(f.Detail, testKey) {
+		t.Errorf("Detail should carry the cracked key for terminal display, got %q", f.Detail)
+	}
 }
 
 func TestScanSkipsNonShiro(t *testing.T) {

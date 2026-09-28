@@ -104,15 +104,15 @@ func TestShouldHTTPProbeIncludesNacosFallbackPort(t *testing.T) {
 	}
 }
 
-func TestHostDiscoveryHonorsNoICMPPing(t *testing.T) {
+func TestHostDiscoveryWithoutEnabledProbesRetainsHosts(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.PingFirst = true
 	cfg.NoICMPPing = true
 	p := &Pipeline{cfg: cfg}
 
 	got := p.hostDiscovery(context.Background(), []string{"127.0.0.1"})
-	if len(got) != 0 {
-		t.Fatalf("hostDiscovery with NoICMPPing = %v, want no ICMP-only result", got)
+	if len(got) != 1 || got[0] != "127.0.0.1" {
+		t.Fatalf("hostDiscovery with no enabled probes = %v, want original targets", got)
 	}
 }
 

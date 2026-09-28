@@ -99,12 +99,13 @@ func (s *Scanner) Scan(ctx context.Context, url string) (*types.Finding, error) 
 				Severity:     types.SeverityCritical,
 				Target:       url,
 				Description:  fmt.Sprintf("Shiro rememberMe decryptable with known key %q (%s)", key, mode),
+				Detail:       fmt.Sprintf("key=%q mode=%s", key, mode),
 				Tags:         []string{"shiro", "deserialization", "rce"},
 				DiscoveredAt: time.Now(),
 			}, nil
 		}
 	}
-	return nil, nil
+	return nil, ctx.Err()
 }
 
 // tryKey checks one key in CBC then GCM mode, confirming a hit twice to cut
@@ -114,23 +115,41 @@ func (s *Scanner) tryKey(ctx context.Context, url, key string, content []byte) (
 	if err != nil {
 		return "", false
 	}
+	controlKey := make([]byte, len(raw))
+	if _, err := rand.Read(controlKey); err != nil {
+		return "", false
+	}
 	for mode, enc := range map[string]func([]byte, []byte) (string, error){"cbc": aesCBCEncrypt, "gcm": aesGCMEncrypt} {
 		payload, err := enc(raw, content)
 		if err != nil {
 			continue
 		}
-		if ok, _ := s.sendRememberMe(ctx, url, payload); !ok {
+		control, err := enc(controlKey, content)
+		if err != nil {
 			continue
 		}
-		if ok, _ := s.sendRememberMe(ctx, url, payload); ok {
+		confirmed := true
+		for i := 0; i < 2; i++ {
+			// A same-shape invalid cookie must still be rejected. WAFs may
+			// strip cookies or return a 200 challenge for every encrypted value.
+			if ok, err := s.sendRememberMe(ctx, url, control); err != nil || ok {
+				confirmed = false
+				break
+			}
+			if ok, err := s.sendRememberMe(ctx, url, payload); err != nil || !ok {
+				confirmed = false
+				break
+			}
+		}
+		if confirmed {
 			return mode, true
 		}
 	}
 	return "", false
 }
 
-// sendRememberMe returns true when the response lacks the deleteMe marker —
-// i.e. the rememberMe value decrypted successfully.
+// sendRememberMe reports absence of the rejection cookie on a non-error
+// response. Only the caller's paired negative control can confirm a key.
 func (s *Scanner) sendRememberMe(ctx context.Context, url, data string) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -144,9 +163,18 @@ func (s *Scanner) sendRememberMe(ctx context.Context, url, data string) (bool, e
 		return false, err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	return !strings.Contains(strings.Join(resp.Header["Set-Cookie"], ""), "rememberMe=deleteMe;"), nil
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return false, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return false, fmt.Errorf("shiro: HTTP status %d", resp.StatusCode)
+	}
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == "rememberMe" && cookie.Value == "deleteMe" {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func aesCBCEncrypt(key, content []byte) (string, error) {

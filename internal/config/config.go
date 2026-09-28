@@ -34,6 +34,7 @@ type Config struct {
 	Ports             string
 	ExcludePorts      string
 	PortsThreshold    int
+	FirewallRunLen    int
 
 	OnlyIPPort           bool
 	AllowLocalAreaDomain bool
@@ -100,6 +101,7 @@ func Defaults() Config {
 		OutputType:            "text",
 		HTMLOutput:            "report.html",
 		PortsThreshold:        300,
+		FirewallRunLen:        100,
 		ProxyTest:             false,
 		ProxyTestURL:          "https://www.baidu.com",
 		ScanType:              "tcp",
@@ -190,8 +192,10 @@ func ParseArgs(args []string) (Config, error) {
 	fs.StringVar(&cfg.Ports, "port", cfg.Ports, "port spec (legacy long alias)")
 	fs.StringVar(&cfg.ExcludePorts, "np", cfg.ExcludePorts, "exclude ports (comma-separated)")
 	fs.StringVar(&cfg.ExcludePorts, "no-port", cfg.ExcludePorts, "exclude ports (legacy long alias)")
-	fs.IntVar(&cfg.PortsThreshold, "pmc", cfg.PortsThreshold, "max open ports per IP before dropping it as firewalled")
-	fs.IntVar(&cfg.PortsThreshold, "ports-max-count", cfg.PortsThreshold, "max open ports per IP (legacy long alias)")
+	fs.IntVar(&cfg.PortsThreshold, "pmc", cfg.PortsThreshold, "warn when open ports per IP exceed this count; retain all ports (0 disables warning)")
+	fs.IntVar(&cfg.PortsThreshold, "ports-max-count", cfg.PortsThreshold, "open-port count warning threshold (long alias)")
+	fs.IntVar(&cfg.FirewallRunLen, "fwr", cfg.FirewallRunLen, "warn about consecutive open-port runs of this length; retain all ports (0 disables warning)")
+	fs.IntVar(&cfg.FirewallRunLen, "firewall-run-len", cfg.FirewallRunLen, "consecutive open-port warning threshold (long alias)")
 
 	fs.BoolVar(&cfg.FullScan, "full", cfg.FullScan, "run all nuclei templates")
 	fs.BoolVar(&cfg.DisableGeneralPoc, "no-general", cfg.DisableGeneralPoc, "skip General-Poc set in precise mode")

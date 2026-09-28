@@ -252,7 +252,7 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 		open = p.tcpScan(ctx, hosts)
 	}
 
-	open = p.filterByPortThreshold(open)
+	open = p.retainPortsWithWarnings(open)
 	for _, r := range open {
 		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
@@ -270,21 +270,14 @@ func (p *Pipeline) tcpScan(ctx context.Context, hosts []string) []portscan.Resul
 	if p.cfg.PortScanTimeout > 0 {
 		opts.TimeoutSeconds = p.cfg.PortScanTimeout
 	}
-	if p.cfg.Ports != "" {
-		ports, perr := portscan.ParsePortSpec(p.cfg.Ports)
-		if perr != nil {
-			fmt.Printf("\x1b[31m[!]\x1b[0m %v\n", perr)
-			return nil
-		}
-		opts.Ports = ports
+	var err error
+	opts.Ports, err = p.scanPortList()
+	if err != nil {
+		warnf("%v\n", err)
+		return nil
 	}
-	if p.cfg.ExcludePorts != "" {
-		excl, perr := portscan.ParsePortSpec(p.cfg.ExcludePorts)
-		if perr != nil {
-			fmt.Printf("\x1b[31m[!]\x1b[0m exclude ports: %v\n", perr)
-		} else {
-			opts.Ports = excludeFrom(opts.Ports, excl)
-		}
+	if len(opts.Ports) == 0 {
+		return nil
 	}
 
 	fmt.Printf("\x1b[32m[*]\x1b[0m TCP port scanning %d host(s) x %d ports...\n", len(hosts), len(opts.Ports))
@@ -300,6 +293,9 @@ func (p *Pipeline) tcpScan(ctx context.Context, hosts []string) []portscan.Resul
 // hostDiscovery pre-filters hosts by ICMP (-ping) and/or TCP connect (-tp); a
 // host is kept if either probe answers.
 func (p *Pipeline) hostDiscovery(ctx context.Context, hosts []string) []string {
+	if (!p.cfg.PingFirst || p.cfg.NoICMPPing) && !p.cfg.TCPPing {
+		return hosts
+	}
 	before := len(hosts)
 	aliveSet := make(map[string]struct{})
 
@@ -342,10 +338,18 @@ func (p *Pipeline) hostDiscovery(ctx context.Context, hosts []string) []string {
 // synScan runs a naabu SYN scan; ok is false when raw sockets are unavailable
 // (no npcap/privilege), signalling the caller to fall back to TCP connect.
 func (p *Pipeline) synScan(ctx context.Context, hosts []string) ([]portscan.Result, bool) {
+	spec, err := p.synPortSpec()
+	if err != nil {
+		warnf("%v\n", err)
+		return nil, true
+	}
+	if spec == "" {
+		return nil, true
+	}
 	fmt.Printf("\x1b[36m[SYN]\x1b[0m scanning %d host(s)...\n", len(hosts))
 	opts := synscan.DefaultOptions()
 	opts.Rate = p.cfg.SYNScanRate
-	results, err := synscan.Scan(ctx, hosts, p.synPortSpec(), opts)
+	results, err := synscan.Scan(ctx, hosts, spec, opts)
 	if err != nil {
 		fmt.Printf("\x1b[31m[!]\x1b[0m synscan: %v\n", err)
 		return nil, false
@@ -358,21 +362,40 @@ func (p *Pipeline) synScan(ctx context.Context, hosts []string) ([]portscan.Resu
 	return open, true
 }
 
-// synPortSpec renders the naabu port string: -p when set (all/full -> full
-// range), else the curated default set. naabu rejects the "top1000" alias.
-func (p *Pipeline) synPortSpec() string {
-	spec := strings.TrimSpace(p.cfg.Ports)
-	if spec == "" {
-		parts := make([]string, len(portscan.DefaultPorts))
-		for idx, port := range portscan.DefaultPorts {
-			parts[idx] = strconv.Itoa(port)
+// scanPortList applies the same selection and exclusions to TCP and SYN.
+// An empty result means scan nothing, never restore the scanner's defaults.
+func (p *Pipeline) scanPortList() ([]int, error) {
+	ports := append([]int(nil), portscan.DefaultPorts...)
+	if strings.TrimSpace(p.cfg.Ports) != "" {
+		var err error
+		ports, err = portscan.ParsePortSpec(p.cfg.Ports)
+		if err != nil {
+			return nil, err
 		}
-		return strings.Join(parts, ",")
 	}
-	if strings.EqualFold(spec, "all") || strings.EqualFold(spec, "full") {
-		return "1-65535"
+	if p.cfg.ExcludePorts != "" {
+		excluded, err := portscan.ParsePortSpec(p.cfg.ExcludePorts)
+		if err != nil {
+			return nil, fmt.Errorf("exclude ports: %w", err)
+		}
+		ports = excludeFrom(ports, excluded)
 	}
-	return spec
+	return ports, nil
+}
+
+func (p *Pipeline) synPortSpec() (string, error) {
+	ports, err := p.scanPortList()
+	if err != nil {
+		return "", err
+	}
+	if len(ports) == 65535 {
+		return "1-65535", nil
+	}
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = strconv.Itoa(port)
+	}
+	return strings.Join(parts, ","), nil
 }
 
 // bruteForce attempts weak credentials against the service ports the scanner
@@ -892,9 +915,6 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 				return
 			}
 			printFinding(*f)
-			if f.Description != "" {
-				webLine(0, f.Target, f.Description, nil) // surface the cracked key/mode
-			}
 			if werr := p.reporter.WriteFinding(*f); werr != nil {
 				warnf("report: %v\n", werr)
 			}
@@ -1451,7 +1471,13 @@ func webProbeInputs(openPorts []portscan.Result, services map[string]string) []s
 	return out
 }
 
-func (p *Pipeline) filterByPortThreshold(results []portscan.Result) []portscan.Result {
+// retainPortsWithWarnings is shared by TCP and SYN results. Neither port count
+// nor layout proves the absence of a real service, so diagnostics must not filter.
+func (p *Pipeline) retainPortsWithWarnings(results []portscan.Result) []portscan.Result {
+	for host, n := range portscan.DetectContiguousRuns(results, p.cfg.FirewallRunLen) {
+		warnf("%s: %d ports in long consecutive blocks; service identity is unconfirmed, all ports retained for detection\n", host, n)
+		_ = p.auditor.LogInfo("port-anomaly", map[string]any{"host": host, "reason": "contiguous", "ports": n, "threshold": p.cfg.FirewallRunLen, "action": "retained"})
+	}
 	if p.cfg.PortsThreshold <= 0 {
 		return results
 	}
@@ -1459,14 +1485,13 @@ func (p *Pipeline) filterByPortThreshold(results []portscan.Result) []portscan.R
 	for _, r := range results {
 		counts[r.Host]++
 	}
-	var out []portscan.Result
-	for _, r := range results {
-		if counts[r.Host] > p.cfg.PortsThreshold {
-			continue
+	for host, n := range counts {
+		if n > p.cfg.PortsThreshold {
+			warnf("%s: %d open ports exceeds warning threshold %d; all ports retained, service detection may take longer\n", host, n, p.cfg.PortsThreshold)
+			_ = p.auditor.LogInfo("port-anomaly", map[string]any{"host": host, "reason": "count", "ports": n, "threshold": p.cfg.PortsThreshold, "action": "retained"})
 		}
-		out = append(out, r)
 	}
-	return out
+	return results
 }
 
 func excludeFrom(ports, exclude []int) []int {

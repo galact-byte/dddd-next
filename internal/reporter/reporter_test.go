@@ -133,6 +133,73 @@ func TestHTMLReporterInteractiveLayout(t *testing.T) {
 	}
 }
 
+func TestCopyButtonsFor(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want []htmlCopyButton
+	}{
+		{"192.0.2.10", []htmlCopyButton{{"复制IP", "192.0.2.10"}}},
+		{"192.0.2.10:3306", []htmlCopyButton{{"复制IP", "192.0.2.10"}}},
+		{"http://192.0.2.10:8080/x", []htmlCopyButton{{"复制IP", "192.0.2.10"}}},
+		{"example.com", []htmlCopyButton{{"复制地址", "example.com"}}},
+		{"example.com:8443", []htmlCopyButton{{"复制地址", "example.com:8443"}}},
+		{"http://example.com/a?b=1", []htmlCopyButton{{"复制地址", "http://example.com/a?b=1"}}},
+	}
+	for _, c := range cases {
+		got := copyButtonsFor(c.raw)
+		if len(got) != len(c.want) {
+			t.Errorf("%q: got %d buttons %+v, want %d", c.raw, len(got), got, len(c.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%q button[%d] = %+v, want %+v", c.raw, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+func TestHTMLReporterCopyTargets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "report.html")
+	r := NewHTML(path)
+	if err := r.WriteFingerprint("http://asset.example.com/login", types.Fingerprint{Name: "WordPress"}); err != nil {
+		t.Fatalf("WriteFingerprint: %v", err)
+	}
+	f := sampleFinding()
+	f.Target = "192.0.2.10:3306"
+	if err := r.WriteFinding(f); err != nil {
+		t.Fatalf("WriteFinding: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	s := string(data)
+	for _, want := range []string{
+		"window.copyValue",                           // shared literal-copy handler
+		`class="finding-actions"`,                    // copy buttons live in the always-visible header
+		`data-copy="192.0.2.10"`,                     // IP-based finding: bare IP
+		`>复制IP<`,                                     // IP label present
+		`data-copy="http://asset.example.com/login"`, // domain asset: full address kept
+		`>复制地址<`,                                     // address label present
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("copy-target report missing %q (len=%d)", want, len(s))
+		}
+	}
+	// Only one button per target: no redundant full-address for IP, no separate hostname for domain.
+	if strings.Contains(s, `data-copy="192.0.2.10:3306"`) {
+		t.Errorf("IP:port target should not render a redundant 复制地址 button")
+	}
+	if strings.Contains(s, "复制主机名") {
+		t.Errorf("hostname button should be gone; only one button per target")
+	}
+}
+
 func TestMultiReporter(t *testing.T) {
 	var txtBuf, jsonBuf bytes.Buffer
 	multi := NewMulti(NewTextWriter(&txtBuf), NewJSONWriter(&jsonBuf))

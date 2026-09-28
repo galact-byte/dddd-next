@@ -22,7 +22,7 @@ func TestHelpListsEffectiveOptionsAndAliases(t *testing.T) {
 			"-a", "-alf, -audit-log-filename", "-sd, -subdomain",
 			"-nsb, -no-subdomain-brute", "-ns, -no-subfinder", "-proxy",
 			"-st, -scan-type", "-sst, -syn-scan-threads", "-p, -port", "-np, -no-port",
-			"-pmc, -ports-max-count", "-ping", "-tp, -tcp-ping", "-Pn", "-nip, -no-icmp-ping",
+			"-pmc, -ports-max-count", "-fwr, -firewall-run-len", "-ping", "-tp, -tcp-ping", "-Pn", "-nip, -no-icmp-ping",
 			"-skip-cdn", "-ac, -allow-cdn", "-no-dir, -nd", "-nhb, -no-host-bind",
 			"-oip", "-ld, -local-domain", "-lpm, -low-perception-mode",
 			"-limit, -fmc, -fofa-max-count, -qmc, -quake-max-count",

@@ -1,13 +1,13 @@
 # dddd-next
 
-`dddd-next` 是基于 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 设计重写的资产探测与漏洞扫描工具，使用 Go 开发，依赖跟随 projectdiscovery 主线。默认根据产品指纹选择 POC，官方 Nuclei 模板可独立更新。
+`dddd-next` 是基于 [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd) 设计重写的资产探测与漏洞扫描工具，使用 Go 开发，核心扫描能力基于 projectdiscovery 等开源组件。默认根据产品指纹选择 POC，官方 Nuclei 模板可独立更新。
 
 ## 主要能力
 
 - 支持 IP、网段、域名、URL、测绘语句和目标文件，接入 FOFA / Hunter / Quake。
 - 端口与服务识别、子域名枚举、主动及被动指纹识别、产品路径探测。
 - Nuclei 精准 POC、GoPoC 弱口令与协议检测、Shiro 专项检测。
-- TXT / JSON / HTML 报告及审计日志；HTML 支持严重度筛选、详情展开和请求 / 响应复制。
+- TXT / JSON / HTML 报告及审计日志；HTML 支持严重度筛选、详情展开、目标地址和请求 / 响应复制。
 
 ## 下载与快速开始
 
@@ -75,6 +75,8 @@ dddd.exe -fofa -t "app=\"seeyon\"" -limit 100
 ## 扫描结果
 
 每次扫描默认生成 `output/<时间戳>/result.txt` 和 `report.html`。HTML 报告可直接用浏览器打开；`-ot json` 切换结果格式，`-o` / `-ho` 指定相对文件名，`-a` 开启审计日志。
+
+终端直接显示弱口令、Shiro 密钥和模板提取值等关键结果；完整详情可在报告中查看，目标旁的按钮可直接复制 IP 或地址。
 
 ## 更新程序与模板
 

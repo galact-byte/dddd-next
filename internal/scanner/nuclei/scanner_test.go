@@ -160,6 +160,31 @@ func TestToFinding(t *testing.T) {
 	}
 }
 
+func TestToFindingMapsExtractedResults(t *testing.T) {
+	ev := &output.ResultEvent{
+		TemplateID: "info-leak",
+		Info: model.Info{
+			Name:           "Extractor demo",
+			SeverityHolder: severity.Holder{Severity: severity.High},
+		},
+		ExtractedResults: []string{"admin", "token=abc123"},
+	}
+	f := toFinding(ev)
+	if !strings.Contains(f.Detail, "admin") || !strings.Contains(f.Detail, "token=abc123") {
+		t.Errorf("extracted results not surfaced in Detail: %q", f.Detail)
+	}
+}
+
+func TestToFindingNoExtractedResultsEmptyDetail(t *testing.T) {
+	ev := &output.ResultEvent{
+		TemplateID: "x",
+		Info:       model.Info{SeverityHolder: severity.Holder{Severity: severity.Info}},
+	}
+	if f := toFinding(ev); f.Detail != "" {
+		t.Errorf("Detail should be empty when no extracted results, got %q", f.Detail)
+	}
+}
+
 func TestToFindingNilReference(t *testing.T) {
 	ev := &output.ResultEvent{
 		TemplateID: "x",

@@ -17,10 +17,13 @@ go build -o dddd.exe ./cmd/dddd
 
 # 自动化测试和静态检查
 go test ./...
+go test -race ./...
 go vet ./...
 ```
 
 构建后的帮助入口为 `dddd help`；使用方式和配置目录见[使用指南](usage.md)。
+
+`httpx v1.9.0` 通过 `go.mod` 的相对路径替换使用 `third_party/httpx/`，修复运行中限速器被按值复制的数据竞争。源码构建需保留该目录，无须额外安装。来源、许可证、四行补丁和以后升级或移除替换的方法见[第三方依赖维护说明](../third_party/README.md)。
 
 ## 项目结构
 
@@ -54,6 +57,7 @@ dddd-next/
 │   ├── reporter/                # TXT / JSON / HTML 报告
 │   ├── audit/                   # 审计日志
 │   └── updater/                 # 程序本体及 Nuclei 模板更新
+├── third_party/httpx/           # httpx v1.9.0 最小并发修复及完整上游源码
 ├── pkg/fingerdsl/               # 指纹表达式 DSL
 ├── configs/
 │   ├── fingers/                # 编译进程序的基础指纹库
@@ -68,7 +72,7 @@ dddd-next/
 
 | 维度 | 原 dddd | dddd-next |
 | --- | --- | --- |
-| 依赖管理 | `lib/` 内嵌修改后的依赖 | Go modules 跟随主线；`replace` 处理 client-go 依赖冲突及 grdp fork |
+| 依赖管理 | `lib/` 内嵌修改后的依赖 | Go modules 为主；`replace` 处理 client-go、grdp 及本地 httpx 最小补丁 |
 | Nuclei | v3.1.8 | 当前依赖 v3.8.0，官方模板独立更新 |
 | 项目结构 | common / lib / gopocs 等平铺模块 | cmd / internal / pkg 分层 |
 | 配置与流程 | 全局配置变量 | 标准库 CLI flag、配置传递和 context 取消 |

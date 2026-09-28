@@ -1,0 +1,26 @@
+--- a/runner/runner.go
++++ b/runner/runner.go
+@@ -89,7 +89,7 @@
+ 	hm                 *hybrid.HybridMap
+ 	excludeCdn         bool
+ 	stats              clistats.StatisticsClient
+-	ratelimiter        ratelimit.Limiter
++	ratelimiter        *ratelimit.Limiter
+ 	HostErrorsCache    gcache.Cache[string, int]
+ 	browser            *Browser
+ 	ditClassifier *dit.Classifier
+@@ -415,11 +415,11 @@
+ 	runner.hm = hm
+ 
+ 	if options.RateLimitMinute > 0 {
+-		runner.ratelimiter = *ratelimit.New(context.Background(), uint(options.RateLimitMinute), time.Minute)
++		runner.ratelimiter = ratelimit.New(context.Background(), uint(options.RateLimitMinute), time.Minute)
+ 	} else if options.RateLimit > 0 {
+-		runner.ratelimiter = *ratelimit.New(context.Background(), uint(options.RateLimit), time.Second)
++		runner.ratelimiter = ratelimit.New(context.Background(), uint(options.RateLimit), time.Second)
+ 	} else {
+-		runner.ratelimiter = *ratelimit.NewUnlimited(context.Background())
++		runner.ratelimiter = ratelimit.NewUnlimited(context.Background())
+ 	}
+ 
+ 	if options.HostMaxErrors >= 0 {

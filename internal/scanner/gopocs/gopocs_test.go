@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,25 @@ import (
 
 	"golang.org/x/crypto/ssh"
 )
+
+func TestToFindingCredentialDetail(t *testing.T) {
+	e := New(DefaultOptions(""))
+
+	userPass := e.toFinding(job{service: "mysql", ep: Endpoint{Host: "192.0.2.10", Port: 3306}}, Credential{User: "root", Pass: "123456"})
+	if userPass.Detail != `username="root" password="123456"` {
+		t.Errorf("user+pass Detail = %q", userPass.Detail)
+	}
+
+	passOnly := e.toFinding(job{service: "redis", ep: Endpoint{Host: "h", Port: 6379}}, Credential{Pass: "redispass"})
+	if passOnly.Detail != `password="redispass"` {
+		t.Errorf("password-only Detail = %q", passOnly.Detail)
+	}
+
+	emptyPass := e.toFinding(job{service: "mysql", ep: Endpoint{Host: "h", Port: 3306}}, Credential{User: "root", Pass: ""})
+	if !strings.Contains(emptyPass.Detail, `username="root"`) || !strings.Contains(emptyPass.Detail, "空密码") {
+		t.Errorf("empty-password Detail should label the empty password, got %q", emptyPass.Detail)
+	}
+}
 
 func TestParseDict(t *testing.T) {
 	dir := t.TempDir()

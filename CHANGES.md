@@ -1,5 +1,129 @@
 # 修改记录 — dddd-next
 
+## 2026-09-29 — v0.1.51 发布整理
+
+- 汇总本轮结果展示、报告复制、端口异常保留及全仓排查修复，版本更新为 `0.1.51`。
+- README 仅补充用户可见功能；`release_note.md` 使用不带图标的中文发布说明，记录改进、问题修复与端口阈值兼容变化。
+- 开发指南补充本地 httpx 依赖维护入口与 race 检查；忽略本地需求、实现计划和构建证据，保留完整依赖源码。
+- 发布前已通过全仓普通测试和 race（各 446 项通过、2 项跳过）、go vet、Windows/Linux amd64 构建与 4 项二进制实测；版本更新后重跑 CLI 测试通过。标签工作流负责 Linux CI 与三个平台的正式构建。
+
+## 2026-09-29 — httpx 限速器数据竞争修复（纳入 v0.1.51）
+
+### 背景与目标
+
+httpx v1.9.0 初始化 Runner 时按值复制正在运行的限速器，与限速器后台协程的原子计数器更新发生竞争。本次将已验证的四行补丁接入正式依赖，消除此前 app/httpprobe 的 race 失败。
+
+### 影响与兼容性
+
+- 根目录 `go.mod` 通过相对路径引用 `third_party/httpx`，正常测试、构建和发布均使用修复版；没有修改全局模块缓存，也没有下载新的依赖版本。
+- 保持 httpx v1.9.0 及其依赖版本，公开 API 和扫描速率参数不变。124 个上游文件完整保留（含 MIT 许可证及嵌入 HTML），只有 `runner/runner.go` 四行代码不同。
+- 普通用户正常更新 dddd 即可。维护者以后升级 httpx 时需检查补丁：上游已修复则移除本地替换，否则将补丁保留到新版本。详见 `third_party/README.md`。
+
+### 文件与实现
+
+| 操作 | 路径 | 说明 |
+|---|---|---|
+| 修改 | `go.mod` | 将 httpx 定位到项目内相对路径 |
+| 新增 | `third_party/httpx/` | 保存完整 v1.9.0 源码；限速器字段改为指针，移除三个构造调用的解引用 |
+| 新增 | `third_party/README.md`、`third_party/httpx-ratelimiter.patch` | 记录来源、许可证、补丁和后续升级/移除方式 |
+| 修改 | `.gitignore`、`.gitattributes` | 放行完整依赖副本，补丁固定 LF 换行以便 Windows/Linux 均可应用 |
+
+### 验证
+
+- `go list -m -json github.com/projectdiscovery/httpx` 确认使用 `./third_party/httpx`；逐文件核对只有一个源文件不同，124 个文件均可被 Git 纳入。
+- 补丁反向应用检查通过，未实际回退源码。
+- `go test -mod=readonly -p=2 -json -count=1 -timeout=60s ./...`：26 个测试包、446 个测试项通过，2 项跳过。
+- `go test -mod=readonly -p=2 -race -json -count=1 -timeout=90s ./...`：全仓 26 个测试包、446 个测试项通过，2 项跳过；此前限速器竞争不再出现。
+- `go vet -mod=readonly -p=2 ./...`、Windows amd64 构建、Linux amd64 交叉编译均通过。新 Windows 程序的报告成功、失败返回非零、TCP/SYN 全部排除端口四个场景通过。
+- `go version -m` 确认新程序包含 `./third_party/httpx` 本地替换；没有继续交付仅包含前 10 项修复的旧程序。
+- 完整命令、日志、退出码、程序及 SHA-256 校验文件位于 `build/review-evidence/dependency-fix/`。全流程使用正式 go.mod，没有临时 `-modfile` 或关闭竞争检测。
+
+### 已知限制与后续
+
+- 跳过项仍是跨盘更新场景和需要真实 DVWA 地址的联测；Linux 构建不等于 SYN 原始套接字实跑，现场连续端口开放的原因仍未验证。
+- 本地依赖副本增加维护责任，未来升级应按维护说明重新验证；本次未提交、推送或发布。
+
+## 2026-09-29 — 全仓排查确认的 10 项缺陷修复（纳入 v0.1.51）
+
+### 背景与目标
+
+将全仓排查的 11 个复现用例转为正式回归测试，修复 Telnet 崩溃、Nuclei 参数覆盖、TCP/SYN 端口排除失效、Shiro 误报、报告落盘错误被隐藏、Hunter 错误泄露查询密钥、HTTP 取消失效、favicon 缺失及存活探测参数组合丢失目标。
+
+### 影响与兼容性
+
+- 不新增依赖，不改参数名称，不改既有扫描结果及报告格式。
+- TCP/SYN 共用端口解析与排除；全部排除时直接结束端口扫描，无默认端口回退。无效排除表达式告警并停止该轮端口扫描。
+- 未启用任何有效存活探测（如 `-ping -nip` 且未启用 `-tp`）时保留目标，不再将全部目标视为离线。
+- Interactsh 设置仅修改对应字段，保留 SDK 模板、筛选、并发及默认配置。
+- Shiro 增加同形态随机错误密钥对照与重复确认；HTTP 错误、WAF 拦截、统一移除 Cookie 的挑战页不再仅凭缺少 `deleteMe` 判定命中。仍是差异响应检测，不保证识别所有复杂中间设备行为。
+- HTTP 探测启用 favicon 采集，会增加图标请求；取消会中断剩余目标和目录调度，已经调度的请求仍需等待结束或超时。保留产品目录的原始输入、路径及查询参数语义。
+- 报告收尾写入失败会输出错误、返回非零退出码并取消成功提示。Hunter 传输错误移除包含 API Key 的请求 URL，同时保留取消等底层原因。
+
+### 文件与实现
+
+| 操作 | 路径 | 说明 |
+|---|---|---|
+| 修改 | `internal/scanner/gopocs/telnetlib/telnet.go` | 跨 TCP 分片解析协商帧，处理 IAC 转义和两字节命令，限制协商缓存并保护短帧 |
+| 修改 | `internal/scanner/nuclei/scanner.go`、`internal/scanner/shiro/shiro.go` | SDK 配置增量修改；密钥检测增加负对照与错误响应检查 |
+| 修改 | `internal/app/pipeline.go`、`cmd/dddd/main.go` | 统一端口选择、无存活探测时保留目标、传播报告收尾错误 |
+| 修改 | `internal/discovery/httpprobe/probe.go`、`internal/discovery/hunter/hunter.go` | 取消接线与产品目录调度、favicon 采集、传输错误 URL 脱敏 |
+| 新增/修改 | 上述 7 个包的 `audit_regression_test.go` 及专项测试 | 正式化排查证据，并覆盖分片边界、取消中途、URL 语义、不同拦截状态、端口组合和错误原因保留 |
+| 修改 | `docs/usage.md`、`CHANGES.md` | 兼容性、取消行为、验证与交付记录 |
+
+### 验证
+
+- RED：10 项缺陷的原始回归全部失败；Telnet 分片续读、HTTP 目标/目录取消补充测试也在修复前失败。记录位于 `build/review-evidence/full-fix/`。
+- 7 个受影响包的普通回归通过（`green.txt`）。
+- `go test -p=2 -json -count=1 -timeout=60s ./...`：26 个测试包通过，446 个测试项通过、2 个跳过；另 3 个包没有测试。全量记录为 `full-tests.jsonl`。
+- `go vet -p=2 ./...`、Windows amd64 构建、Linux amd64 交叉编译通过（`verify-status.json`）。新 Windows 二进制的报告成功/失败、TCP/SYN 全部排除端口四个场景通过（`binary-smoke.json`）。
+- **正式依赖下 race 未全绿**：7 个包中 5 个通过；app/httpprobe 触发上游 httpx v1.9.0 按值复制活动限速器的竞争，保留 `race.txt`。这个问题不算已修复。
+- 已准备四行上游补丁 `httpx-ratelimiter.patch`，仅用临时 `-modfile` 和本机依赖副本隔离验证：app/httpprobe 连续两轮 race 通过（`race-proposed-patch.txt`）。**未接入项目 go.mod、未修改模块缓存，交付二进制也未包含该上游补丁**。
+
+### 已知限制与后续
+
+- 额外的上游限速器竞争待确认依赖处理方式：采用项目内依赖补丁，或调查含修复的兼容版本后升级；不通过隐藏 race 或临时改全局模块缓存交付。
+- 尚未做 Linux SYN 原始套接字实跑、真实 Hunter/Interactsh API 联测；本地受控服务及 SDK 参数边界已覆盖。没有为本次测试安装依赖、发布或推送。
+- 用户另一台电脑上连续端口开放的现场根因仍未验证，本次不将其宣称为已消除。
+- 如需回退，使用本次修改前的程序即可，无数据迁移；会重新带回上述缺陷。
+
+## 2026-09-28 — 扫描关键结果、报告复制与端口漏报修正（未发布）
+
+### 背景与目标
+
+- 让终端直接显示扫描器取得的关键值，补齐 HTML/TXT/JSON 的完整结果，减少报告查找步骤。
+- 修正连续端口直接删除及超量主机整机删除造成的漏报；端口连续只作异常线索，不能据此判断区间内没有真实服务。
+
+### 影响与兼容性
+
+- GoPoC 成功凭证、Shiro key/mode、Nuclei 提取值统一进入 `Finding.Detail`。终端过滤控制字符，无关键值时回退到简短描述；报告保留完整详情，HTML 使用模板转义。
+- 每个漏洞目标/指纹资产仅一个复制按钮：IP 类复制纯 IP，域名/URL 类复制完整地址。复制入口位于卡片头部；剪贴板失败不会假报成功。
+- `-fwr`（默认 100）与 `-pmc`（默认 300）及各自长别名保留，改为告警阈值，0 关闭对应告警。TCP/SYN 共同保留所有结果；开启审计时写入 `port-anomaly` 及 `action=retained`。
+- 原来被丢弃的端口现在继续服务识别，可能增加总耗时；复用既有有界并发、单次超时和取消机制，无新增依赖。没有更改 SYN 原始套接字实现。
+
+### 文件与实现
+
+- `internal/types/types.go`、`internal/scanner/{gopocs,nuclei,shiro}/`、`internal/app/color.go`：关键结果产生与统一终端输出。
+- `internal/reporter/{html,text}.go`：详情字段和单目标复制，覆盖完整值、转义及无详情兼容。
+- `internal/discovery/portscan/`、`internal/app/pipeline.go`、`internal/config/config.go`：连续段统计、两类告警与帮助文案；结果不再删除。
+- `internal/app/port_anomaly_test.go`、`internal/reporter/detail_test.go` 及现有相关测试：区间内服务保留、混合主机、301 个离散端口、关闭告警、本地 HTTP 识别、取消与多格式报告回归。
+- `cmd/dddd/main.go`、`help_test.go`：同步实际中文 CLI 帮助中的 `-pmc` 和 `-fwr` 及别名。
+- `docs/usage.md`、任务计划：记录新行为、兼容性与现场验证边界。
+
+### 验证
+
+- 先复现失败再实现；本地证据位于 `build/review-evidence/fix-red.txt`、`fix-green.txt`，最终正式测试以源码中的回归用例为准。
+- `go test -count=1 -timeout=45s ./internal/app ./internal/scanner/gopocs ./internal/scanner/nuclei ./internal/scanner/shiro ./internal/reporter ./internal/discovery/portscan ./internal/discovery/servicedetect ./internal/config`：8 个包通过；相同包的 `go vet` 通过。
+- `go test -count=1 -timeout=45s ./cmd/dddd`、`go vet ./cmd/dddd` 通过；重建后的 `-h` 显示两个告警参数及“保留全部结果”。
+- Windows `go build -o build/review-evidence/dddd-fixed-windows-amd64.exe ./cmd/dddd`、`go build ./...` 通过；Linux amd64 `CGO_ENABLED=0` 交叉编译通过，未执行 Linux 二进制。
+- 复用本机 Chromium 实测 `file://` 报告：真实剪贴板读取核对 IP/URL/IPv6/指纹资产，键盘 Enter、无误展开、Clipboard API 不可用/拒绝以及回退 false/异常分支全部通过。390/768/1440 宽度无页面横向溢出，长值完整且脚本按文本显示。证据：`browser-results.json`、`report-*.png`。
+
+### 已知限制与回退
+
+- 未连接用户另一台电脑上的两台 Linux 服务器，12000–13000 异常开放的现场根因尚未证实；当前修正的是结果误删，不能宣称已经消除假开放。
+- Linux SYN 实机测试尚未执行；Windows 本地受控 TCP 服务与公共处理分支已有回归覆盖。未将交叉编译当作 Linux 实测。
+- 服务识别底层 fingerprintx 不支持即时取消，取消后可能等待当前单次探测超时；不承诺异常目标的整体耗时或瞬时停止。
+- 本次没有发布、推送或外部扫描。临时关闭异常提示使用 `-fwr 0 -pmc 0`，这不会删除结果；若要恢复旧版整机过滤行为，需使用旧版程序，但会重新引入漏报风险。
+
 ## 2026-09-16 — v0.1.49：本体升级子命令
 
 ### 背景与目标

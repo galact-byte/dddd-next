@@ -62,3 +62,14 @@ output/
 # 本地 Pi 配置与会话状态
 /.pi/
 /.until-done/
+
+# 本地审查证据与验证构建
+/build/review-evidence/
+
+# 本地 httpx 补丁依赖需要完整源码及嵌入资源（含 HTML）
+!/third_party/httpx/**
+
+# 本地需求、实现计划与构建产物
+/1.txt
+/docs/superpowers/
+/build/
