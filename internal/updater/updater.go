@@ -8,6 +8,7 @@
 package updater
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -104,14 +105,20 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 	}
 
 	if isGitRepo(src.Dir) {
-		fmt.Fprintf(u.progress, "[updater] pulling %s (%s)\n", src.Name, src.Dir)
+		fmt.Fprintf(u.progress, "[updater] updating %s (%s)\n", src.Name, src.Dir)
 		oldSHAOut, _ := u.runner.Run(ctx, src.Dir, "rev-parse", "HEAD")
 		oldSHA := strings.TrimSpace(string(oldSHAOut))
 		r.PreviousSHA = oldSHA
 
-		if _, err := u.runWithProgress(ctx, src.Dir, "pull", "--ff-only", "--progress"); err != nil {
+		var err error
+		if src.Depth > 0 {
+			err = u.syncShallow(ctx, src)
+		} else {
+			_, err = u.runWithProgress(ctx, src.Dir, "pull", "--ff-only", "--progress")
+		}
+		if err != nil {
 			r.Action = ActionFailed
-			r.Err = fmt.Errorf("pull %s: %w", src.Name, err)
+			r.Err = fmt.Errorf("update %s: %w", src.Name, err)
 			r.Duration = time.Since(start)
 			return r
 		}
@@ -137,7 +144,7 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 
 	args := []string{"clone", "--progress"}
 	if src.Depth > 0 {
-		args = append(args, "--depth", strconv.Itoa(src.Depth))
+		args = append(args, "--depth", strconv.Itoa(src.Depth), "--no-tags")
 	}
 	if src.Branch != "" {
 		args = append(args, "--branch", src.Branch)
@@ -157,6 +164,65 @@ func (u *Updater) updateOne(ctx context.Context, src Source) Result {
 	r.Action = ActionCloned
 	r.Duration = time.Since(start)
 	return r
+}
+
+// syncShallow moves a shallow clone to the remote tip without `git pull`.
+// A shallow pull follows merge parents back past the shallow boundary and
+// auto-follows every tag it reaches, which turns a depth-1 checkout into a
+// near-full clone. Fetching the tip again with --depth keeps it shallow.
+func (u *Updater) syncShallow(ctx context.Context, src Source) error {
+	status, err := u.runner.Run(ctx, src.Dir, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(status)) != 0 {
+		return fmt.Errorf("local changes to tracked files in %s; commit, stash or discard them before updating", src.Dir)
+	}
+	branch := src.Branch
+	if branch == "" {
+		upstream, err := u.runner.Run(ctx, src.Dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+		name := strings.TrimSpace(string(upstream))
+		if err != nil || !strings.HasPrefix(name, "origin/") {
+			return fmt.Errorf("cannot determine the origin branch tracked by %s; check out the template branch", src.Dir)
+		}
+		branch = strings.TrimPrefix(name, "origin/")
+	}
+	tracking := "refs/remotes/origin/" + branch
+	ahead, err := u.runner.Run(ctx, src.Dir, "rev-list", "--count", tracking+"..HEAD")
+	if err != nil {
+		return err
+	}
+	if n := strings.TrimSpace(string(ahead)); n != "0" {
+		return fmt.Errorf("%s local commit(s) in %s would be discarded; move them elsewhere before updating", n, src.Dir)
+	}
+	quiet := "-q" // older git: hides ref lines but also local receive progress
+	if gitAtLeast(ctx, u.runner, 2, 41) {
+		quiet = "--porcelain" // ref lines go to stdout; all progress stays on stderr
+	}
+	if _, err := u.runWithProgress(ctx, src.Dir, "fetch", quiet, "--progress", "--no-tags",
+		"--depth", strconv.Itoa(src.Depth), "origin", "+refs/heads/"+branch+":"+tracking); err != nil {
+		return err
+	}
+	_, err = u.runner.Run(ctx, src.Dir, "reset", "-q", "--hard", tracking)
+	return err
+}
+
+// gitAtLeast parses `git version X.Y...`; unknown formats count as older.
+func gitAtLeast(ctx context.Context, runner GitRunner, major, minor int) bool {
+	version, err := runner.Version(ctx)
+	if err != nil {
+		return false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(version, "git version "), ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	gotMajor, err1 := strconv.Atoi(parts[0])
+	gotMinor, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return gotMajor > major || gotMajor == major && gotMinor >= minor
 }
 
 // Custom runners can opt into streaming without changing the GitRunner contract.

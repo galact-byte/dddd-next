@@ -160,6 +160,15 @@ func (g *templateGit) Run(_ context.Context, dir string, args ...string) ([]byte
 		}
 	}
 	g.dirs = append(g.dirs, dir)
+	switch args[0] {
+	case "status":
+		return nil, nil // clean worktree
+	case "rev-list":
+		return []byte("0\n"), nil // no local commits
+	}
+	if args[len(args)-1] == "@{upstream}" {
+		return []byte("origin/main\n"), nil
+	}
 	return []byte("abc123"), nil
 }
 

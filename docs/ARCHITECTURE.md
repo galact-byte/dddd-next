@@ -109,7 +109,7 @@ type Reporter interface {
    - 启动时检查 `configs/nuclei-templates/` 是否存在，不存在则提示用户运行 `dddd update`
 
 2. **`dddd update` 子命令**（`internal/updater/`）：
-   - 默认源：`https://github.com/projectdiscovery/nuclei-templates`（git clone / pull）
+   - 默认源：`https://github.com/projectdiscovery/nuclei-templates`（首次 `git clone --depth 1 --no-tags`；之后 `git fetch --depth 1 --no-tags` 加 `reset --hard` 保持浅克隆，本地有已跟踪文件改动或本地提交时拒绝更新）
    - 可选源：用户自维护的 POC 仓库（通过 `--source` 参数指定）
    - 自动检测 nuclei 版本，匹配兼容的 templates tag
    - 支持代理：`HTTPS_PROXY` 环境变量

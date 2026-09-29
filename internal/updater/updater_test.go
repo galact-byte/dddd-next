@@ -229,3 +229,53 @@ func (f runnerFunc) Run(ctx context.Context, dir string, args ...string) ([]byte
 	return f(ctx, dir, args...)
 }
 func (runnerFunc) Version(_ context.Context) (string, error) { return "fake", nil }
+
+type versionRunner struct {
+	runnerFunc
+	version string
+}
+
+func (v versionRunner) Version(context.Context) (string, error) { return v.version, nil }
+
+func TestShallowFetchOutputModeFollowsGitVersion(t *testing.T) {
+	for version, want := range map[string]string{
+		"git version 2.54.0.windows.1": "--porcelain",
+		"git version 2.41.0":           "--porcelain",
+		"git version 3.0.0":            "--porcelain",
+		"git version 2.40.1":           "-q",
+		"unexpected":                   "-q",
+	} {
+		target := filepath.Join(t.TempDir(), "repo")
+		if err := os.MkdirAll(filepath.Join(target, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var fetch []string
+		runner := versionRunner{version: version, runnerFunc: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			switch args[0] {
+			case "fetch":
+				fetch = args
+			case "rev-list":
+				return []byte("0\n"), nil
+			case "rev-parse":
+				if args[len(args)-1] == "@{upstream}" {
+					return []byte("origin/main\n"), nil
+				}
+				return []byte("abc\n"), nil
+			}
+			return nil, nil
+		}}
+		u := New([]Source{{Name: "t", URL: "https://x.git", Dir: target, Depth: 1}}).WithRunner(runner).WithProgress(new(bytes.Buffer))
+		if r := u.Update(context.Background()); r[0].Err != nil {
+			t.Fatalf("%s: %v", version, r[0].Err)
+		}
+		if len(fetch) < 2 || fetch[1] != want {
+			t.Errorf("%s: fetch args = %v, want %s", version, fetch, want)
+		}
+		joined := strings.Join(fetch, " ")
+		for _, flag := range []string{"--progress", "--no-tags", "--depth 1", "+refs/heads/main:refs/remotes/origin/main"} {
+			if !strings.Contains(joined, flag) {
+				t.Errorf("%s: fetch args missing %s: %v", version, flag, fetch)
+			}
+		}
+	}
+}

@@ -348,3 +348,49 @@ func assertBinaryContent(t *testing.T, path, want string) {
 		t.Fatalf("binary at %s = %q, %v; want %q", path, got, err, want)
 	}
 }
+
+func TestBinaryUpdateShowsDownloadProgress(t *testing.T) {
+	u, f := newBinaryFixture(t)
+	f.payload = strings.Repeat("x", 3<<20)
+	f.size = len(f.payload)
+	var progress strings.Builder
+	u.progress = &progress
+	if _, err := u.Update(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out := progress.String()
+	for _, want := range []string{"\r", "100%", "3.0/3.0 MiB", "MiB/s"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("download progress missing %q:\n%q", want, out)
+		}
+	}
+	if !strings.HasSuffix(out, "\n") {
+		t.Errorf("progress bar line must be terminated: %q", out)
+	}
+}
+
+func TestDownloadBarHoldsSpeedUntilMeasurable(t *testing.T) {
+	var out strings.Builder
+	start := time.Now()
+	b := &downloadBar{w: &out, total: 10 << 20, start: start, done: 1 << 20}
+	b.render(start.Add(time.Millisecond))
+	if !strings.Contains(out.String(), "--.- MiB/s") {
+		t.Fatalf("early frame shows a rate: %q", out.String())
+	}
+	out.Reset()
+	b.done = 4 << 20
+	b.render(start.Add(2 * time.Second))
+	if !strings.Contains(out.String(), "   2.0 MiB/s") || !strings.Contains(out.String(), " 40%") {
+		t.Fatalf("measured frame = %q", out.String())
+	}
+}
+
+func TestDownloadBarFinalFrameShowsAverage(t *testing.T) {
+	var out strings.Builder
+	start := time.Now()
+	b := &downloadBar{w: &out, total: 1 << 20, start: start, done: 1 << 20}
+	b.render(start.Add(100 * time.Millisecond))
+	if !strings.Contains(out.String(), "  10.0 MiB/s") {
+		t.Fatalf("final frame = %q", out.String())
+	}
+}
