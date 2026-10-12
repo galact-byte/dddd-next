@@ -59,3 +59,7 @@ release:
     owner: galact-byte
     name: dddd-next
   prerelease: auto
+  extra_files:
+    - glob: LICENSE
+    - glob: NOTICE
+    - glob: licenses/*.txt

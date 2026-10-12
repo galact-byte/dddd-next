@@ -1,31 +1,31 @@
-MIT License
+Galact 内部使用与免费分发许可 1.0
+许可标识：LicenseRef-Galact-Internal-Use-1.0
 
-Copyright (c) 2026 dddd-next contributors
+本许可是自定义的源码可用许可，不是 MIT，也不是符合 OSI 开源定义的许可证。项目的版权通知、历史许可和第三方例外见随附 NOTICE。
 
-This project is a re-implementation inspired by the original `dddd` project:
-  Copyright (c) 2023 SleepingBag945 (https://github.com/SleepingBag945/dddd)
-  Released under the MIT License.
+一、适用范围
+本许可仅适用于项目中权利人有权按本许可授权的原创内容。“软件”包括这些内容的源码、可执行程序、文档和修改版。本许可不代表其他作者同意重新授权，不取代第三方内容及其衍生部分原有的有效许可。依本许可行使权利，即表示接受本许可条件。
 
-Although this codebase is written from scratch under modern Go conventions
-and depends on up-to-date upstream libraries (nuclei v3, httpx, subfinder,
-dnsx, etc.), the design philosophy, fingerprint database format, and CLI
-ergonomics borrow heavily from the original work. We gratefully acknowledge
-the original author.
+二、允许的使用
+在遵守本许可的前提下，允许个人、公司及其他组织免费使用、复制、研究、修改、部署软件，用于合法的个人用途或内部工作；公司内部使用可以用于正常经营业务。允许不收取对价的对外分发，包括源码和修改版，但须遵守第四条。
+仅使用软件完成受托工作并交付不含软件代码的报告、图片、译文等成果，不因此受到第三条的限制。本许可不对这些输出主张软件许可权利，但第三方内容的版权、隐私和其他权利仍须分别遵守。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+三、须另行书面授权的商业化
+未经相关权利人另行书面授权，不得对外出售、出租、付费转授权或以其他对价提供软件及修改版；不得将软件或其实质部分集成、捆绑到对外收费的产品中；不得向外部用户提供以软件功能为直接收费内容的托管、SaaS、API 或远程访问服务。
+“收费”包括与提供软件或其功能直接对应的订阅、会员、购买资格、实物或其他对价，不因将收费项目改名而免除授权要求。与获取软件、功能或访问资格不挂钩的自愿捐赠，不因此被视为收费。
+下载、公开源码或给予署名均不等于取得商业授权。授权范围、期限、费用及其他条件，以相关权利人的书面授权为准。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+四、分发、署名与防冒充
+分发软件或其实质部分时，须保留适用的版权声明、本 LICENSE、NOTICE，以及所涉及第三方的许可和通知；修改版须清楚标识修改者和已作修改，不得把修改版虚假表示为原作者的官方版本。
+本许可不授予商标、标识、推荐或背书权利。不得虚假声称获得原作者认可、合作或担保，也不得把第三方版本的经营、支持或使用行为表示为原作者所为。真实说明来源及依法进行署名不受此限制。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+五、历史许可与第三方例外
+此前已按 MIT 或其他许可合法取得的版本和内容，仍可按其原有有效许可使用、修改和分发；本许可不撤回已授予的权利，也不消除既有许可下合法衍生版本的权利。历史许可正文和版本基线见 NOTICE 及随附许可文件。
+第三方代码、依赖、字体、图片、数据、平台资源和其他素材由其各自权利人持有，遵守各自许可。即使没有单独许可文件，也不能据此推定项目维护者拥有重新授权权利。本许可不限制这些内容原许可独立授予的权利。
+
+六、责任与合法使用
+软件按“现状”提供。在适用法律允许的范围内，权利人不提供适销性、特定用途适用性、准确性或无侵权等明示或默示保证，不承担因软件使用或第三方分发产生的损失。不得据此免除法律规定不能排除的责任。
+本许可不是访问第三方系统、处理他人数据、修改游戏或使用第三方内容的授权；使用者须自行取得所需授权并遵守适用法律。
+
+七、终止与独立授权
+违反本许可条件的，本许可授予的权利终止。终止不影响其他独立有效许可已经授予的权利。相关权利人可对其有权授权的内容另行授予不同条件的许可。

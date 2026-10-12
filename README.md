@@ -132,4 +132,6 @@ dddd.exe -fofa -t "app=\"seeyon\"" -limit 100
 - [SleepingBag945/dddd](https://github.com/SleepingBag945/dddd)：原项目及设计、指纹库和 POC 格式来源。
 - [projectdiscovery](https://github.com/projectdiscovery)：Nuclei、httpx、subfinder 等核心依赖；服务识别使用 [fingerprintx](https://github.com/praetorian-inc/fingerprintx)。
 
-采用 [MIT License](LICENSE)。
+本项目可由个人和公司免费用于合法内部工作，包括正常经营业务及授权测评；免费分发须保留署名和许可，并标识修改版。对外售卖、集成进收费产品或以软件功能提供收费服务，须另行取得书面商业授权。
+
+完整条款见 [LICENSE](LICENSE)，版权、第三方例外和旧版 MIT 权利见 [NOTICE](NOTICE)。这是自定义源码可用许可，不是 MIT 或 OSI 开源许可；此前合法取得的 MIT 版本及内容仍享有原许可权利。第三方指纹、规则和依赖不因此被重新授权。商业授权请通过本官方仓库联系维护者。

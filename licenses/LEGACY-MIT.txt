@@ -1,0 +1,31 @@
+MIT License
+
+Copyright (c) 2026 dddd-next contributors
+
+This project is a re-implementation inspired by the original `dddd` project:
+  Copyright (c) 2023 SleepingBag945 (https://github.com/SleepingBag945/dddd)
+  Released under the MIT License.
+
+Although this codebase is written from scratch under modern Go conventions
+and depends on up-to-date upstream libraries (nuclei v3, httpx, subfinder,
+dnsx, etc.), the design philosophy, fingerprint database format, and CLI
+ergonomics borrow heavily from the original work. We gratefully acknowledge
+the original author.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
