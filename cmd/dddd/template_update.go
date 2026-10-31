@@ -118,6 +118,13 @@ func updateTemplates(ctx context.Context, explicit, configDir, settingsPath stri
 		}
 		dir = saved
 	}
+	if dir == "" && configDir == "" {
+		var err error
+		configDir, err = resolveConfigDir()
+		if err != nil {
+			return fmt.Errorf("%w; use `dddd update -nt <writable-directory>` to choose a template directory", err)
+		}
+	}
 	sources := updater.DefaultSources(configDir)
 	if dir != "" {
 		absolute, err := filepath.Abs(dir)

@@ -77,7 +77,7 @@ func TestCreateOutputDirAvoidsTimestampCollision(t *testing.T) {
 func TestResolveConfigDirPrefersConfigsBesideExecutable(t *testing.T) {
 	exeDir := t.TempDir()
 	cwd := t.TempDir()
-	home := t.TempDir()
+	t.Chdir(cwd)
 	exeConfig := filepath.Join(exeDir, "configs")
 	if err := os.Mkdir(exeConfig, 0o755); err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestResolveConfigDirPrefersConfigsBesideExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), cwd, home, nil, "test-version")
+	got, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), nil, "test-version")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,29 +96,38 @@ func TestResolveConfigDirPrefersConfigsBesideExecutable(t *testing.T) {
 	}
 }
 
-func TestResolveConfigDirPrefersWorkingDirConfigsWhenExecutableHasNone(t *testing.T) {
+func TestResolveConfigDirIgnoresWorkingDirConfigsWhenExecutableHasNone(t *testing.T) {
 	exeDir := t.TempDir()
 	cwd := t.TempDir()
-	home := t.TempDir()
+	t.Chdir(cwd)
 	cwdConfig := filepath.Join(cwd, "configs")
 	if err := os.Mkdir(cwdConfig, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), cwd, home, nil, "test-version")
+	builtin := zipFixture(t, map[string]string{"dir.yaml": "paths: []\n"})
+	got, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), builtin, "test-version")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got != cwdConfig {
-		t.Fatalf("resolveConfigDirWith = %q, want cwd config %q", got, cwdConfig)
+	want := filepath.Join(exeDir, "configs")
+	if got != want {
+		t.Fatalf("resolveConfigDirWith = %q, want executable config %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(want, "dir.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cwdConfig, "dir.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("working directory was modified: %v", err)
 	}
 }
 
-func TestResolveConfigDirMaterializesBuiltinConfigsUnderDownloads(t *testing.T) {
+func TestResolveConfigDirMaterializesBuiltinConfigsBesideExecutable(t *testing.T) {
 	exeDir := t.TempDir()
-	cwd := t.TempDir()
 	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	builtin := zipFixture(t, map[string]string{
 		"dir.yaml":             "paths: []\n",
 		"dict/shirokeys.txt":   "kPH+bIxk5D2deZiIxcaaaA==\n",
@@ -127,12 +136,12 @@ func TestResolveConfigDirMaterializesBuiltinConfigsUnderDownloads(t *testing.T) 
 		"pocs/legacy/test.yml": "id: test\n",
 	})
 
-	got, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), cwd, home, builtin, "test-version")
+	got, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), builtin, "test-version")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := filepath.Join(home, "Downloads", "dddd-next", "configs")
+	want := filepath.Join(exeDir, "configs")
 	if got != want {
 		t.Fatalf("resolveConfigDirWith = %q, want materialized config %q", got, want)
 	}
@@ -148,17 +157,47 @@ func TestResolveConfigDirMaterializesBuiltinConfigsUnderDownloads(t *testing.T) 
 
 func TestResolveConfigDirRejectsUnsafeBuiltinConfigPaths(t *testing.T) {
 	exeDir := t.TempDir()
-	cwd := t.TempDir()
-	home := t.TempDir()
 	builtin := zipFixture(t, map[string]string{
 		"../escape.txt": "bad\n",
 	})
 
-	if _, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), cwd, home, builtin, "test-version"); err == nil {
+	if _, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), builtin, "test-version"); err == nil {
 		t.Fatal("resolveConfigDirWith accepted unsafe built-in config path")
 	}
-	if _, err := os.Stat(filepath.Join(home, "Downloads", "escape.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(exeDir, "escape.txt")); !os.IsNotExist(err) {
 		t.Fatalf("unsafe file escaped materialized config dir: %v", err)
+	}
+}
+
+func TestResolveConfigDirDoesNotFallBackWhenExecutableConfigIsBlocked(t *testing.T) {
+	exeDir, cwd, home := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Chdir(cwd)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	blocked := filepath.Join(exeDir, "configs")
+	if err := os.WriteFile(blocked, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	builtin := zipFixture(t, map[string]string{"dir.yaml": "paths: []\n"})
+	got, err := resolveConfigDirWith(filepath.Join(exeDir, "dddd.exe"), builtin, "test-version")
+	if err == nil || got != "" {
+		t.Fatalf("blocked config resolved to %q, %v; want error without fallback", got, err)
+	}
+	for _, dir := range []string{cwd, home} {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("fallback directory modified: %s, %v, %v", dir, entries, err)
+		}
+	}
+	if data, err := os.ReadFile(blocked); err != nil || string(data) != "keep" {
+		t.Fatalf("existing file changed: %q, %v", data, err)
+	}
+}
+
+func TestResolveConfigDirRejectsMissingExecutablePath(t *testing.T) {
+	builtin := zipFixture(t, map[string]string{"dir.yaml": "paths: []\n"})
+	if got, err := resolveConfigDirWith("", builtin, "test-version"); err == nil || got != "" {
+		t.Fatalf("missing executable resolved to %q, %v; want error", got, err)
 	}
 }
 

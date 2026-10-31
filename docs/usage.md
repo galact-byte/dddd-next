@@ -55,20 +55,20 @@ CDN 默认标记但继续探测，`-skip-cdn` 排除，`-ac` 覆盖排除设置�
 
 ## 配置目录
 
-Release 版是单文件二进制，内置指纹、字典、映射和 legacy POC 等基础配置。查找 `configs/` 的优先级为：
+Release 版是单文件二进制，内置指纹、字典、映射和 legacy POC 等基础配置。Windows 和 Linux 均使用**程序所在目录的 `configs/`**：已有目录保留不覆盖，不存在时在该处释放内置配置。切换工作目录不会改变配置位置，也不会自动转到用户下载目录。
 
-1. 程序所在目录。
-2. 当前工作目录。
-3. 两处均不存在时，将内置基础配置释放到用户下载目录并使用：
+例如：
 
 ```text
-Windows: %USERPROFILE%\Downloads\dddd-next\configs
-Linux:   ~/Downloads/dddd-next/configs
+Windows 程序 E:\Tools\dddd\dddd.exe → E:\Tools\dddd\configs
+Linux 程序 /opt/dddd/dddd             → /opt/dddd/configs
 ```
 
-自定义指纹、字典或 legacy POC 时，把 `configs/` 放在程序同目录。下载目录中的内置副本可能随版本刷新覆盖，不建议当作长期自定义配置目录。也可用 `-fy`、`-wy`、`-dy`、`-swl` 分别指定指纹、POC 映射、路径探测配置和子域名字典。
+请将程序放在可写目录。基础配置准备失败时会报告实际路径并停止，不会悄悄换一个位置写入。自定义指纹、字典或 legacy POC 放在程序同级 `configs/`；也可用 `-fy`、`-wy`、`-dy`、`-swl` 分别指定指纹、POC 映射、路径探测配置和子域名字典。
 
-未记住或指定其他模板目录时，`dddd update` 会将官方 `nuclei-templates` 拉取到当前实际使用的配置目录。模板目录可单独选择，见下节。
+未记住或指定其他模板目录时，`dddd update` 将官方模板下载到 `<程序目录>/configs/nuclei-templates`。若只需将模板更新到其他可写位置，可用 `dddd update -nt <目录>`；显式指定或已记住模板目录的更新不要求先在程序旁释放基础配置。扫描仍需要可用的基础配置。
+
+**旧版升级**：不会自动搬迁或删除旧版 `~/Downloads/dddd-next/configs`（Windows 为 `%USERPROFILE%\Downloads\dddd-next\configs`）或原工作目录里的配置。若要沿用其中的自定义配置及已下载模板，请在程序同级尚无 `configs/` 时，将旧目录完整复制到程序同级；已有同级配置时请先备份并核对差异，避免覆盖。通过 `dddd update -nt <目录>` 保存过的模板路径继续有效。
 
 ## 更新本体与模板
 

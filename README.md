@@ -67,7 +67,7 @@ dddd.exe -fofa -t "app=\"seeyon\"" -limit 100
 
 ## 配置须知
 
-- **基础配置**：优先使用程序同目录的 `configs/`，其次是工作目录；均不存在时释放到 `~/Downloads/dddd-next/configs`（Windows 为 `%USERPROFILE%\Downloads\dddd-next\configs`）。自定义指纹、字典和 POC 请放在程序同目录，下载目录中的内置副本可能随版本刷新覆盖。
+- **基础配置**：使用程序同目录的 `configs/`，不存在时在该处释放内置配置；不会自动改用工作目录或用户下载目录。请将程序放在可写目录，自定义指纹、字典和 POC 也放在这里。已有同级配置保留不覆盖；旧版下载目录不会自动迁移，升级说明见[配置目录](docs/usage.md#配置目录)。
 - **API 密钥**：复制 [.env.example](.env.example) 为 `.env`，放在工作目录或程序目录。FOFA 填 `FOFA_EMAIL` + `FOFA_KEY`，Hunter 填 `HUNTER_API_KEY`，Quake 填 `QUAKE_TOKEN`。优先级为进程环境变量 > 工作目录 `.env` > 程序目录 `.env`，已设置的空值也不会被覆盖。免费 FOFA 账号没有 API 配额。
 - **测绘引擎**：`-fofa` / `-hunter` / `-quake` 可组合选择，未指定时使用三者。自建 FOFA 用 `FOFA_SERVER` 设置 HTTP(S) 基础地址，程序自动追加 `/api/v1/search/all`，仍需邮箱和 Key；返回内网资产时加 `-ld`，否则会被过滤。
 - **模板目录**：`dddd update -nt <目录>` 成功后会记住目录，后续更新和扫描复用；扫描时的 `-nt` 仅覆盖本次。模板与指纹库分别管理，更新官方模板不会自动更新指纹库。

@@ -15,63 +15,26 @@ import (
 
 const builtinConfigVersionFile = ".builtin-version"
 
-func resolveConfigDir() string {
-	exePath := ""
-	if exe, err := os.Executable(); err == nil {
-		exePath = exe
-	}
-	cwd := ""
-	if dir, err := os.Getwd(); err == nil {
-		cwd = dir
-	}
-	home := ""
-	if dir, err := os.UserHomeDir(); err == nil {
-		home = dir
-	}
-
-	dir, err := resolveConfigDirWith(exePath, cwd, home, builtinconfigs.BundleZip, appVersion)
+func resolveConfigDir() (string, error) {
+	exePath, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[!] failed to prepare built-in configs: %v\n", err)
-		if cwd != "" {
-			return filepath.Join(cwd, "configs")
-		}
-		return "configs"
+		return "", fmt.Errorf("resolve executable path: %w", err)
 	}
-	return dir
+	return resolveConfigDirWith(exePath, builtinconfigs.BundleZip, appVersion)
 }
 
-func resolveConfigDirWith(exePath, cwd, home string, builtinZip []byte, version string) (string, error) {
-	if exePath != "" {
-		candidate := filepath.Join(filepath.Dir(exePath), "configs")
-		if dirExists(candidate) {
-			return candidate, nil
-		}
+func resolveConfigDirWith(exePath string, builtinZip []byte, version string) (string, error) {
+	if exePath == "" {
+		return "", errors.New("cannot resolve executable path")
 	}
-	if cwd != "" {
-		candidate := filepath.Join(cwd, "configs")
-		if dirExists(candidate) {
-			return candidate, nil
-		}
-	}
-
-	dest, err := defaultMaterializedConfigDir(home, cwd)
-	if err != nil {
-		return "", err
+	dest := filepath.Join(filepath.Dir(exePath), "configs")
+	if dirExists(dest) {
+		return dest, nil
 	}
 	if err := materializeBuiltinConfigs(dest, builtinZip, version); err != nil {
-		return "", err
+		return "", fmt.Errorf("prepare configs at %s (place the program in a writable directory): %w", dest, err)
 	}
 	return dest, nil
-}
-
-func defaultMaterializedConfigDir(home, cwd string) (string, error) {
-	if home != "" {
-		return filepath.Join(home, "Downloads", appName, "configs"), nil
-	}
-	if cwd != "" {
-		return filepath.Join(cwd, appName, "configs"), nil
-	}
-	return "", errors.New("cannot resolve user Downloads directory")
 }
 
 func materializeBuiltinConfigs(dest string, bundle []byte, version string) error {

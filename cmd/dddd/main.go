@@ -25,7 +25,7 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.52"
+var appVersion = "0.1.53"
 
 func main() {
 	loadDotEnv()
@@ -87,6 +87,12 @@ func runScan(args []string) int {
 		return 2
 	}
 
+	configDir, err := resolveConfigDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
 	printBanner()
 
 	outDir := setupOutputDir()
@@ -95,7 +101,7 @@ func runScan(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	pipeline, err := app.New(cfg, resolveConfigDir())
+	pipeline, err := app.New(cfg, configDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -292,8 +298,8 @@ func printHelp() {
   免费 FOFA 账号没有 API 配额。
 
 配置目录与更新：
-  发行版内置基础配置，优先使用程序同目录、其次工作目录中的 configs/；
-  均不存在时释放并使用 ~/Downloads/dddd-next/configs。
+  发行版内置基础配置，使用程序同目录的 configs/，不存在时在该处释放。
+  不会自动改用工作目录或用户下载目录；准备失败时停止并报告错误。
   dddd update -nt <目录> 成功后记住目录，后续更新和扫描复用；扫描 -nt 仅覆盖本次。
   目录记录保存在用户配置目录的 dddd-next/templates.json。
   GITHUB_TOKEN 可选，用于程序更新 API 请求（也可通过 .env 配置），
@@ -329,7 +335,7 @@ func runUpdate(args []string) int {
 		return 2
 	}
 
-	if err := updateTemplates(ctx, dir, resolveConfigDir(), settingsPath, nil); err != nil {
+	if err := updateTemplates(ctx, dir, "", settingsPath, nil); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
