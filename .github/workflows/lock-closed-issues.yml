@@ -1,0 +1,23 @@
+name: Lock closed issues
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lock the closed issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh api \
+            --method PUT \
+            "repos/$GH_REPO/issues/$ISSUE_NUMBER/lock" \
+            -f lock_reason=resolved
