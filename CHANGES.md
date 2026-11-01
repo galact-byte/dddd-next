@@ -1,5 +1,43 @@
 # 修改记录 — dddd-next
 
+## 未发布 — macOS ARM64 构建、原生验证与 Actions 下载包
+
+### 背景与目标
+
+- 根据本仓库 Issue #2 中对 macOS ARM64 预编译文件的明确请求，补充 Apple Silicon 构建；不扩展到 Intel Mac。
+- 保持源码版本 `0.1.53`，通过 Actions 提供 Mac 下载包，不修改旧版发布说明、不创建版本标签或发布 Release；v0.1.53 既有 Release 资产不变。
+
+### 文件与实现
+
+| 操作 | 路径 | 说明 |
+|---|---|---|
+| 修改 | `.goreleaser.yaml` | 增加 `darwin/arm64`，显式排除 `darwin/amd64`；保留三个既有平台、CGO 关闭、文件命名及校验和规则 |
+| 新增 | `.github/workflows/macos-arm64.yml` | main 推送、PR、手动及可复用工作流入口；macOS 14 ARM64 原生全仓测试、构建和实际程序冒烟检查，通过后将同一程序连同校验和及许可打包为 Actions 产物，保留 90 天 |
+| 修改 | `.github/workflows/release.yml` | 发布任务依赖 macOS ARM64 验证，失败时阻止发布；既有 Ubuntu 测试及 GoReleaser 发布步骤保留 |
+| 新增 | `cmd/dddd/release_smoke_test.go` | 可通过 `DDDD_SMOKE_BINARY` 验证当前平台的实际程序；隔离临时目录，覆盖版本、帮助、缺目标退出码、配置位置、本地 DVWA 指纹、Nuclei 正反例及 JSON / HTML 报告 |
+| 修改 | `internal/updater/binary_test.go` | 复用现有更新链路，验证 darwin/arm64 资产选择、校验与替换；无需修改更新实现 |
+| 修改 | `README.md`、`docs/usage.md`、`docs/development.md`、`.github/ISSUE_TEMPLATE/bug_report.yml` | 同步构建平台、用户运行限制、验证流程及问题反馈平台选项 |
+
+### 影响与兼容性
+
+- 无扫描逻辑、配置格式或默认行为变更；新增资产沿用 `dddd-next_<版本>_darwin_arm64` 命名。本体更新按运行平台自动选择相应资产，旧版本缺少该平台资产时不会降级安装其他平台。
+- macOS 产物未使用 Apple 开发者签名或公证，下载后的 Gatekeeper 提示不在 CI 验证范围内；README 提醒先核验来源和校验和。
+- 回退本次配置即可恢复原发布矩阵；不涉及用户数据迁移。
+
+### 验证
+
+- 发布矩阵检查先确认旧配置缺少 `darwin/arm64`；修改后 YAML 解析、精确矩阵断言、可复用工作流路径及发布依赖检查通过，目标仅为 Windows amd64、Linux amd64 / arm64、macOS arm64。
+- `CGO_ENABLED=0 DDDD_SMOKE_BINARY=<Windows测试程序> go test -trimpath -p=2 -count=1 -json ./...`：457 项测试通过、1 项跳过，26 个包通过；实际程序的本地模拟扫描通过，包含唯一正例命中与负例不误报。日志位于 `E:/DevData/dddd-macos-validation/tests.jsonl`。
+- `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -p=2 -trimpath -ldflags='-s -w -buildid= -X main.appVersion=ci-macos-arm64' ... ./cmd/dddd`：通过；`file` 确认为 Mach-O 64-bit arm64 executable。测试产物不作为正式发行版交付。
+- `CGO_ENABLED=0 go vet -p=2 ./...`、`git diff --check` 通过。本地临时目录使用原生 Windows 路径，避免测试中的路径分隔符比较差异。
+- Actions 打包步骤用受控版本程序与 SHA-256 工具替身在本地执行：归档名称、五项文件清单、程序可执行权限、校验和及许可内容验证通过；不将此打包验证视为 macOS 原生运行验证。darwin/arm64 本体更新回归再次通过。
+
+### 已知限制与后续
+
+- 本地 Windows 验证和交叉构建不能替代云端 Mac 的实际执行结果；仅成功的 macOS 构建才提供 Artifacts 下载，不提前宣称云端验证通过。按用户要求不主动轮询远端构建结果。
+- Actions 包使用源码版本号，须登录 GitHub 下载，90 天后过期；不是新增 Release。最终 GoReleaser 资产仍单独生成，不宣称两者逐字节相同。
+- 下一次正式发布前须根据实际发布范围更新版本号与 `release_note.md`，首次 macOS 发行应说明架构及签名 / 公证限制。
+
 ## v0.1.53 — 发布准备
 
 - 版本号更新为 `0.1.53`，发布说明沿用最近版本的中文小节、简短条目及完整变更链接，不增加图标或自动生成提交列表。

@@ -48,6 +48,7 @@ body:
         - Windows amd64
         - Linux amd64
         - Linux arm64
+        - macOS arm64（Apple Silicon）
         - 自行编译
         - 不适用（文档问题）
     validations:

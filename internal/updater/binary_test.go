@@ -96,6 +96,7 @@ func TestBinaryUpdateReplacesExecutable(t *testing.T) {
 		{"windows", "amd64", "dddd-next_0.1.49_windows_amd64.exe"},
 		{"linux", "amd64", "dddd-next_0.1.49_linux_amd64"},
 		{"linux", "arm64", "dddd-next_0.1.49_linux_arm64"},
+		{"darwin", "arm64", "dddd-next_0.1.49_darwin_arm64"},
 	} {
 		t.Run(platform.goos+"/"+platform.arch, func(t *testing.T) {
 			u, f := newBinaryFixture(t)

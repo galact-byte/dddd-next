@@ -11,7 +11,11 @@
 
 ## 下载与快速开始
 
-从 [Releases](https://github.com/galact-byte/dddd-next/releases/latest) 下载对应平台的单文件程序：Windows amd64、Linux amd64 / arm64。下文假设重命名为 `dddd.exe` 或 `dddd`；Linux 下载后先运行 `chmod +x dddd`。
+发行构建目标为 Windows amd64、Linux amd64 / arm64、macOS arm64（Apple Silicon，M 系列芯片）。请从 [Releases](https://github.com/galact-byte/dddd-next/releases/latest) 下载对应平台的单文件程序，旧版可能不含全部平台。下文假设重命名为 `dddd.exe` 或 `dddd`；Linux / macOS 下载后先运行 `chmod +x dddd`。
+
+macOS ARM64 也可从 [Actions 构建](https://github.com/galact-byte/dddd-next/actions/workflows/macos-arm64.yml)下载，无需等待新的 Release：打开成功的构建记录，在页面底部 **Artifacts** 下载 `dddd-next-macos-arm64`。需要登录 GitHub，产物保留 90 天；解开下载的 ZIP 后，再解压其中的 `.tar.gz`，运行 `./dddd help`。构建包沿用当前源码版本号，包含程序、SHA-256 校验和及许可文件。
+
+macOS 版未进行 Apple 开发者签名或公证，系统可能提示无法验证开发者；请先核验下载来源及 `checksums.txt`，再按系统提示允许运行。Intel Mac 不在当前发行构建范围内。
 
 发行版内置基础配置，无需手动携带 `configs/`。更新官方模板需要系统安装 Git；完整参数以 `help` 为准。
 
@@ -24,7 +28,7 @@ Windows PowerShell：
 .\dddd.exe -t targets.txt -p 1-65535
 ```
 
-Linux：
+Linux / macOS：
 
 ```bash
 ./dddd help

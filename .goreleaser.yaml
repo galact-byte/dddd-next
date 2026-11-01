@@ -17,12 +17,15 @@ builds:
     goos:
       - windows
       - linux
+      - darwin
     goarch:
       - amd64
       - arm64
     ignore:
       - goos: windows
         goarch: arm64
+      - goos: darwin
+        goarch: amd64
     ldflags:
       - -s -w
       - -buildid=
