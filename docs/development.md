@@ -96,9 +96,9 @@ masscan 类超大网段加速和变化中的官方模板兼容性仍需持续回
 
 ## 发布与历史资料
 
-版本号位于 `cmd/dddd/main.go`，面向用户的发布说明位于 [release_note.md](../release_note.md)。推送 `v*` 标签触发 [Release 工作流](../.github/workflows/release.yml)：先通过 [macOS ARM64 工作流](../.github/workflows/macos-arm64.yml) 的原生验证，再在 Ubuntu 上运行 `go test ./...`，由 GoReleaser 使用该说明发布 Windows amd64、Linux amd64 / arm64、macOS arm64 单文件程序及校验和。macOS 验证失败时不会进入发布步骤；不构建 macOS amd64。
+版本号位于 `cmd/dddd/main.go`，面向用户的发布说明位于 [release_note.md](../release_note.md)。推送 `v*` 标签或手动运行 [Release 工作流](../.github/workflows/release.yml) 时，先通过 [macOS ARM64 工作流](../.github/workflows/macos-arm64.yml) 的原生验证，再在 Ubuntu 上运行 `go test ./...`，由 GoReleaser 使用该说明发布 Windows amd64、Linux amd64 / arm64、macOS arm64 单文件程序及校验和。macOS 验证失败时不会进入发布步骤；不构建 macOS amd64。
 
-macOS 工作流也在 `main` 分支推送、PR 和手动触发时运行。它在 `macos-14` ARM64 环境中以 `CGO_ENABLED=0` 运行全仓测试（`go test -trimpath ./...`，与构建复用依赖缓存），使用发行构建参数原生构建程序，并通过 `TestReleaseBinarySmoke` 运行实际程序：版本、帮助、缺目标错误退出、内置配置释放、本地 HTTP 指纹、Nuclei POC 正反例以及 JSON / HTML 报告。测试使用临时目录和本地模板，不下载官方模板或扫描外部目标；不覆盖 Gatekeeper 下载隔离、Apple 签名 / 公证或所有 macOS 版本。
+macOS 工作流由 Release 调用，也可单独手动运行；普通分支推送和 PR 不自动触发。它在 `macos-14` ARM64 环境中以 `CGO_ENABLED=0` 运行全仓测试（`go test -trimpath ./...`，与构建复用依赖缓存），使用发行构建参数原生构建程序，并通过 `TestReleaseBinarySmoke` 运行实际程序：版本、帮助、缺目标错误退出、内置配置释放、本地 HTTP 指纹、Nuclei POC 正反例以及 JSON / HTML 报告。测试使用临时目录和本地模板，不下载官方模板或扫描外部目标；不覆盖 Gatekeeper 下载隔离、Apple 签名 / 公证或所有 macOS 版本。
 
 本地可对已构建的当前平台程序运行相同冒烟检查（路径须指向本机可执行文件）：
 
