@@ -6,7 +6,7 @@
 - 复核配置初始化顺序、所有扫描入口、私有规则保留、异常目录处理和平台测试路径，未发现阻塞发布构建的问题。
 - Windows 全仓复验：`CGO_ENABLED=0 go test -p=2 -count=1 -json ./...`，502 个测试项通过、26 个包通过、0 失败；实际程序冒烟在单独构建后执行并通过。将临时目录放在同盘后，原先跳过的相对模板目录更新测试也通过。
 - 仍未执行的既有测试为需要外部地址的 DVWA 诊断和需要 Windows 符号链接权限的更新测试。`go vet -p=2 ./...`、`git diff --check` 通过。
-- 按 `.goreleaser.yaml` 中的版本、CGO、trimpath 和 ldflags 参数构建本地发行文件；本次不创建版本标签或发布 GitHub Release。
+- 按 `.goreleaser.yaml` 中的版本、CGO、trimpath 和 ldflags 参数构建发行文件；通过 `v0.1.54` 标签触发正式 Release 工作流，依次执行 macOS ARM64 原生验证、Ubuntu 测试和四平台发布构建。
 
 ## 未发布 — Nuclei SDK 配置隔离
 
