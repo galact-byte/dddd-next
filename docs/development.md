@@ -34,6 +34,7 @@ dddd-next/
 │   ├── app/                     # 扫描流程编排
 │   ├── classifier/              # 输入类型自动识别
 │   ├── config/                  # CLI 参数与 .env 加载
+│   ├── nucleiinit/              # SDK 包初始化前隔离 Nuclei 配置目录
 │   ├── types/                   # 公共类型
 │   ├── fingerprint/             # 主动指纹引擎
 │   ├── discovery/
@@ -68,6 +69,10 @@ dddd-next/
 
 `configs/nuclei-templates/` 不纳入 Git，通过 `dddd update` 获取。基础指纹、字典、映射和 legacy POC 则作为发行版内置配置，运行时按目录规则释放或使用外部覆盖。
 
+`internal/scanner/nuclei` 通过空白导入 `internal/nucleiinit`，在上游 SDK 的配置包初始化前将 `NUCLEI_CONFIG_DIR` 指向用户配置目录的 `dddd-next/nuclei`。这个启动包仅依赖上游配置包也依赖的标准库；Go 按导入路径排序初始化依赖已就绪的包，因此当前 `dddd-next/...` 包先于 `github.com/projectdiscovery/...` 初始化。修改模块名、启动包导入路径、该包依赖或升级 SDK 时，必须复核这项约束，运行 `go test ./internal/scanner/nuclei -run '^TestSDKConfigIsolation$' -count=1` 和实际程序冒烟测试，不能把设置环境的操作移到 `main()` 中。
+
+扫描适配层要求始终提供模板根目录，包括显式指定 POC 文件的精准和名称筛选模式；忽略文件使用 SDK 返回的私有路径。`TestNucleiModesUseSelectedTemplateRoot` 通过独立扫描进程和本地 HTTP 服务覆盖三种扫描模式、三种目录来源、根目录下的相对路径字典，以及官方模板目录缺失时的 legacy 回退。Windows 下 SDK 会持有模板文件句柄，测试由父进程在扫描子进程退出后清理临时目录。
+
 ## 与原项目的实现差异
 
 | 维度 | 原 dddd | dddd-next |
@@ -98,7 +103,7 @@ masscan 类超大网段加速和变化中的官方模板兼容性仍需持续回
 
 版本号位于 `cmd/dddd/main.go`，面向用户的发布说明位于 [release_note.md](../release_note.md)。推送 `v*` 标签或手动运行 [Release 工作流](../.github/workflows/release.yml) 时，先通过 [macOS ARM64 工作流](../.github/workflows/macos-arm64.yml) 的原生验证，再在 Ubuntu 上运行 `go test ./...`，由 GoReleaser 使用该说明发布 Windows amd64、Linux amd64 / arm64、macOS arm64 单文件程序及校验和。macOS 验证失败时不会进入发布步骤；不构建 macOS amd64。
 
-macOS 工作流由 Release 调用，也可单独手动运行；普通分支推送和 PR 不自动触发。它在 `macos-14` ARM64 环境中以 `CGO_ENABLED=0` 运行全仓测试（`go test -trimpath ./...`，与构建复用依赖缓存），使用发行构建参数原生构建程序，并通过 `TestReleaseBinarySmoke` 运行实际程序：版本、帮助、缺目标错误退出、内置配置释放、本地 HTTP 指纹、Nuclei POC 正反例以及 JSON / HTML 报告。测试使用临时目录和本地模板，不下载官方模板或扫描外部目标；不覆盖 Gatekeeper 下载隔离、Apple 签名 / 公证或所有 macOS 版本。
+macOS 工作流由 Release 调用，也可单独手动运行；普通分支推送和 PR 不自动触发。它在 `macos-14` ARM64 环境中以 `CGO_ENABLED=0` 运行全仓测试（`go test -trimpath ./...`，与构建复用依赖缓存），使用发行构建参数原生构建程序，并通过 `TestReleaseBinarySmoke` 运行实际程序：版本、帮助、缺目标错误退出、内置配置释放、本地 HTTP 指纹、Nuclei POC 正反例以及 JSON / HTML 报告。测试使用临时目录和本地模板，不下载官方模板或扫描外部目标；还检查版本命令不会创建独立 Nuclei 的配置目录、继承外部配置目录和排除标签不影响扫描、全局配置文件保持原有字节，以及模板根目录下的相对路径字典能正常加载。不覆盖 Gatekeeper 下载隔离、Apple 签名 / 公证或所有 macOS 版本。
 
 本地可对已构建的当前平台程序运行相同冒烟检查（路径须指向本机可执行文件）：
 

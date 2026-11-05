@@ -100,6 +100,10 @@ Linux 程序 /opt/dddd/dddd             → /opt/dddd/configs
 
 模板更新调用系统 Git，已有模板发生变化时显示更新前后的提交版本。成功后记住指定目录，记录保存在用户配置目录的 `dddd-next/templates.json`。
 
+Nuclei SDK 的配置与独立安装的 Nuclei 分开保存，位于用户配置目录的 `dddd-next/nuclei/`，Windows 默认为 `%APPDATA%\dddd-next\nuclei\`，Linux 默认为 `~/.config/dddd-next/nuclei/`，macOS 默认为 `~/Library/Application Support/dddd-next/nuclei/`。其中 `.templates-config.json` 保存 SDK 状态，`.nuclei-ignore` 保存本工具的排除标签和文件规则；首次扫描时创建空排除规则，已有私有规则保留。若要排除本工具的模板，请修改此处的 `.nuclei-ignore`，或使用扫描参数 `-exclude-tags`。
+
+所有扫描模式均按 `-nt` 指定目录、已记住目录、程序同级 `configs/nuclei-templates` 的顺序选择模板根目录，模板引用的相对路径资源也使用该目录解析。独立 Nuclei 的配置及忽略规则不会被读取或修改，已有文件不迁移；继承的 `NUCLEI_CONFIG_DIR` 在本进程内改为私有目录。私有目录准备失败时明确退出，不回退到独立 Nuclei 配置。若主动用 `-nt` 指向独立 Nuclei 正在使用的模板目录，两者仍共用该目录中的模板文件，模板更新会影响双方。
+
 模板目录是只含最新提交、不含标签的浅克隆。首次下载约 15 MiB；之后每次更新只获取上游最新提交，再把目录重置到该版本，只传输变化的对象，历史不会累积。重置前会检查：已跟踪的模板文件有本地改动，或存在本地提交时，拒绝更新并提示原因；未跟踪的自定义模板文件不受影响。
 
 v0.1.51 及更早版本使用 `git pull` 更新，nuclei-templates 的合并提交会把浅克隆拉成完整历史（`.git` 可达数百 MiB，并输出大量标签行）。新版本更新后会恢复为浅克隆，但已下载的旧对象要等 Git 自动清理；需要立即释放空间时，删除模板目录后重新运行 `dddd update`。

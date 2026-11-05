@@ -991,14 +991,14 @@ func stripPathParams(path string) string {
 // nuclei-templates directory.
 func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[string][]string) {
 	opts := buildNucleiOptions(p.cfg)
+	opts.TemplatesDir = p.nucleiTemplateDir()
 
 	if p.cfg.FullScan {
-		tmplDir := p.nucleiTemplateDir()
+		tmplDir := opts.TemplatesDir
 		if info, err := os.Stat(tmplDir); err != nil || !info.IsDir() {
 			warnf("nuclei templates not found at %s — run `dddd update` first; skipping vuln scan\n", tmplDir)
 			return
 		}
-		opts.TemplatesDir = tmplDir
 		infof("nuclei full scan: %d target(s) x all templates...\n", len(urls))
 	} else if strings.TrimSpace(p.cfg.PocName) != "" {
 		pocs := p.resolvePOCsByQuery(p.cfg.PocName)

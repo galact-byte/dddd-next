@@ -1,5 +1,39 @@
 # 修改记录 — dddd-next
 
+## v0.1.54 — 发布准备与配置隔离复核
+
+- 源码版本更新为 `0.1.54`；`release_note.md` 汇总自 v0.1.53 以来的 SDK 配置隔离、相对字典加载修复、升级文件名同步和 macOS ARM64 支持，发布工作流继续通过 `--release-notes release_note.md` 读取该文件。
+- 复核配置初始化顺序、所有扫描入口、私有规则保留、异常目录处理和平台测试路径，未发现阻塞发布构建的问题。
+- Windows 全仓复验：`CGO_ENABLED=0 go test -p=2 -count=1 -json ./...`，502 个测试项通过、26 个包通过、0 失败；实际程序冒烟在单独构建后执行并通过。将临时目录放在同盘后，原先跳过的相对模板目录更新测试也通过。
+- 仍未执行的既有测试为需要外部地址的 DVWA 诊断和需要 Windows 符号链接权限的更新测试。`go vet -p=2 ./...`、`git diff --check` 通过。
+- 按 `.goreleaser.yaml` 中的版本、CGO、trimpath 和 ldflags 参数构建本地发行文件；本次不创建版本标签或发布 GitHub Release。
+
+## 未发布 — Nuclei SDK 配置隔离
+
+### 行为与兼容性
+
+- SDK 状态和忽略规则保存到用户配置目录的 `dddd-next/nuclei/`；Windows 默认为 `%APPDATA%\dddd-next\nuclei\`。在上游 SDK 初始化前完成隔离，版本、帮助、更新和扫描命令均不读取或修改独立 Nuclei 的 `.templates-config.json` 和 `.nuclei-ignore`。
+- 当前进程继承的 `NUCLEI_CONFIG_DIR` 改为上述私有目录，不修改用户或系统环境变量。私有目录不可用时报告错误并退出；扫描时独占创建空忽略规则，保留已有私有规则，文件路径异常时拒绝初始化。
+- 精准、名称筛选和全量扫描统一设置模板根目录，优先级仍为 `-nt`、已记住目录、程序同级 `configs/nuclei-templates`，修复精准及名称筛选模式无法读取根目录下相对路径字典的问题。未下载官方模板时仍支持 legacy POC 回退。
+- 不迁移独立 Nuclei 的配置；需要 dddd-next 使用相同忽略规则时，应配置私有 `.nuclei-ignore` 或扫描参数。主动指定同一模板目录时仍共用模板文件，更新该目录会影响双方。
+
+### 修改文件
+
+- `internal/nucleiinit/init.go`：仅使用标准库，在 SDK 的配置包初始化前准备私有目录并设置进程环境。
+- `internal/scanner/nuclei/scanner.go`：要求明确模板根目录，使用 SDK 返回的私有忽略文件路径，处理创建及文件类型错误。
+- `internal/app/pipeline.go`：为所有 Nuclei 扫描模式传入选定根目录。
+- `internal/scanner/nuclei/isolation_test.go`、`scanner_test.go`、`internal/app/nuclei_isolation_test.go`：覆盖配置原有、缺失、损坏、继承外部目录、私有规则保留、目录与文件受阻、用户配置目录缺失，以及 11 组真实扫描组合。
+- `cmd/dddd/release_smoke_test.go`：实际程序验证版本命令的磁盘隔离、外部排除标签不生效、私有排除标签生效、相对资源加载、唯一正例和 JSON / HTML 报告；逐字节核对外部文件。
+- `docs/usage.md`、`docs/development.md`：记录私有配置、主动共用模板的边界，以及 Go 包初始化顺序的维护约束。
+
+### 验证与限制
+
+- 原实现下复现全局配置缺失时被创建、损坏时被改写，以及精准和名称筛选模式的相对字典加载失败；修复后对应回归通过。
+- `CGO_ENABLED=0 go build -p=2 -trimpath -o <临时 Windows 程序> ./cmd/dddd` 通过；设置 `DDDD_SMOKE_BINARY` 后，`CGO_ENABLED=0 go test -p=2 -count=1 -json ./...` 共 503 个测试项通过、26 个包通过、0 失败。
+- 全仓测试的 3 个既有测试项因未设置外部 DVWA 地址、临时目录位于不同盘符、Windows 缺少创建符号链接权限而跳过。扫描验证使用回环 HTTP 服务和本地模板，不扫描外部目标。
+- 扩展私有规则反向验证并修正测试中的 macOS 配置路径后，实际 Windows 程序冒烟测试及 `./cmd/dddd`、`./internal/scanner/nuclei` 两包回归通过；`go vet -p=2 ./...` 和 `git diff --check` 通过。
+- 本次为 Windows 原生验证，未执行 Linux 或 macOS 原生验证。启动包依赖 Go 对已就绪包按导入路径排序的初始化规则；修改模块名、启动包路径、依赖或升级 SDK 时须复核顺序并运行子进程回归。
+
 ## 未发布 — upgrade 同步带版本号的程序文件名
 
 ### 变更与兼容性

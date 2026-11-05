@@ -25,7 +25,7 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.53"
+var appVersion = "0.1.54"
 
 func main() {
 	loadDotEnv()

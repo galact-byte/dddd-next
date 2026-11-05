@@ -15,6 +15,18 @@ import (
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
+func TestScannerRejectsMissingTemplateRoot(t *testing.T) {
+	opts := DefaultOptions()
+	opts.NoInteractsh = true
+	scanner, err := New(context.Background(), opts)
+	if scanner != nil {
+		defer scanner.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "template root directory is required") {
+		t.Fatalf("missing template root: scanner=%v, error=%v", scanner != nil, err)
+	}
+}
+
 func TestDefaultOptions(t *testing.T) {
 	o := DefaultOptions()
 	if !o.DisableUpdate {

@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	_ "dddd-next/internal/nucleiinit"
 	"dddd-next/internal/types"
 
 	nucleilib "github.com/projectdiscovery/nuclei/v3/lib"
@@ -35,8 +36,8 @@ import (
 
 // Options configures a Scanner. Use DefaultOptions() for safe baseline values.
 type Options struct {
-	// TemplatesDir is the root directory containing nuclei YAML templates.
-	// When empty, nuclei falls back to its built-in default location.
+	// TemplatesDir is required even with explicit Templates: it also resolves
+	// payloads and other resources referenced relative to the template root.
 	TemplatesDir string
 
 	// Templates is an explicit list of POC file paths. When set, nuclei loads
@@ -110,12 +111,19 @@ func New(ctx context.Context, opts Options) (*Scanner, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ensureIgnoreFile()
-	// nuclei resolves templates from a process-global, not from our options;
-	// pin it to ours so it won't fall back to a stray install and phone home.
-	if opts.TemplatesDir != "" {
-		nucleiconfig.DefaultConfig.SetTemplatesDir(opts.TemplatesDir)
+	if strings.TrimSpace(opts.TemplatesDir) == "" {
+		return nil, errors.New("nuclei: template root directory is required")
 	}
+	root, err := filepath.Abs(opts.TemplatesDir)
+	if err != nil {
+		return nil, fmt.Errorf("nuclei: resolve template root: %w", err)
+	}
+	opts.TemplatesDir = root
+	if err := ensureIgnoreFile(); err != nil {
+		return nil, fmt.Errorf("nuclei: prepare ignore file: %w", err)
+	}
+	// Explicit POC files still resolve shared resources through this global.
+	nucleiconfig.DefaultConfig.SetTemplatesDir(root)
 	sdkOpts := buildSDKOptions(opts)
 	engine, err := nucleilib.NewNucleiEngineCtx(ctx, sdkOpts...)
 	if err != nil {
@@ -182,27 +190,26 @@ func (s *Scanner) Close() error {
 	return nil
 }
 
-// ensureIgnoreFile pre-creates ~/.config/nuclei/.nuclei-ignore so a fresh
-// install doesn't log "Could not read nuclei-ignore file" on every run.
-func ensureIgnoreFile() {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return
-	}
-	nucleiDir := filepath.Join(dir, "nuclei")
-	if err := os.MkdirAll(nucleiDir, 0o755); err != nil {
-		return
-	}
-	ignore := filepath.Join(nucleiDir, ".nuclei-ignore")
-	// nuclei parses this as YAML with tags/files lists; a missing or comment-only
-	// file makes it log "could not parse ... EOF". Rewrite unless it already has a
-	// valid key (so we also fix a bad file an older build may have left behind).
-	if data, err := os.ReadFile(ignore); err == nil {
-		if strings.Contains(string(data), "tags:") || strings.Contains(string(data), "files:") {
-			return
+// ensureIgnoreFile creates the SDK's private ignore file without replacing
+// existing rules.
+func ensureIgnoreFile() error {
+	ignore := nucleiconfig.DefaultConfig.GetIgnoreFilePath()
+	file, err := os.OpenFile(ignore, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if os.IsExist(err) {
+		info, statErr := os.Stat(ignore)
+		if statErr != nil {
+			return statErr
 		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("ignore path is not a regular file: %s", ignore)
+		}
+		return nil
 	}
-	_ = os.WriteFile(ignore, []byte("tags: []\nfiles: []\n"), 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.WriteString("tags: []\nfiles: []\n")
+	return errors.Join(writeErr, file.Close())
 }
 
 // buildSDKOptions translates dddd-next Options into the SDK's functional
