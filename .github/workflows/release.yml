@@ -10,11 +10,11 @@ permissions:
   contents: write
 
 jobs:
-  macos-arm64:
-    uses: ./.github/workflows/macos-arm64.yml
+  native-builds:
+    uses: ./.github/workflows/native-build.yml
 
   goreleaser:
-    needs: macos-arm64
+    needs: native-builds
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,9 +27,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Test
-        run: go test ./...
 
       - name: Release
         uses: goreleaser/goreleaser-action@v6

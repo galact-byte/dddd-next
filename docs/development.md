@@ -101,9 +101,9 @@ masscan 类超大网段加速和变化中的官方模板兼容性仍需持续回
 
 ## 发布与历史资料
 
-版本号位于 `cmd/dddd/main.go`，面向用户的发布说明位于 [release_note.md](../release_note.md)。推送 `v*` 标签或手动运行 [Release 工作流](../.github/workflows/release.yml) 时，先通过 [macOS ARM64 工作流](../.github/workflows/macos-arm64.yml) 的原生验证，再在 Ubuntu 上运行 `go test ./...`，由 GoReleaser 使用该说明发布 Windows amd64、Linux amd64 / arm64、macOS arm64 单文件程序及校验和。macOS 验证失败时不会进入发布步骤；不构建 macOS amd64。
+版本号位于 `cmd/dddd/main.go`，面向用户的发布说明位于 [release_note.md](../release_note.md)。推送 `v*` 标签或手动运行 [Release 工作流](../.github/workflows/release.yml) 时，先调用 [原生构建工作流](../.github/workflows/native-build.yml)，并行验证 Windows amd64、Linux amd64 / arm64、macOS arm64。四个平台全部通过后，由 GoReleaser 使用该说明统一发布四平台单文件程序及校验和；任一平台失败均不会进入发布步骤，其他平台仍继续完成验证。
 
-macOS 工作流由 Release 调用，也可单独手动运行；普通分支推送和 PR 不自动触发。它在 `macos-14` ARM64 环境中以 `CGO_ENABLED=0` 运行全仓测试（`go test -trimpath ./...`，与构建复用依赖缓存），使用发行构建参数原生构建程序，并通过 `TestReleaseBinarySmoke` 运行实际程序：版本、帮助、缺目标错误退出、内置配置释放、本地 HTTP 指纹、Nuclei POC 正反例以及 JSON / HTML 报告。测试使用临时目录和本地模板，不下载官方模板或扫描外部目标；还检查版本命令不会创建独立 Nuclei 的配置目录、继承外部配置目录和排除标签不影响扫描、全局配置文件保持原有字节，以及模板根目录下的相对路径字典能正常加载。不覆盖 Gatekeeper 下载隔离、Apple 签名 / 公证或所有 macOS 版本。
+原生构建工作流也可单独手动运行；普通分支推送和 PR 不自动触发。四个平台分别使用 `windows-latest`、`ubuntu-latest`、`ubuntu-24.04-arm`、`macos-14` runner，先校验 Go 宿主平台，再以 `CGO_ENABLED=0` 运行全仓测试（`go test -trimpath ./...`，与构建复用依赖缓存），使用发行构建参数原生构建程序，并通过 `TestReleaseBinarySmoke` 运行实际程序：版本、帮助、缺目标错误退出、内置配置释放、本地 HTTP 指纹、Nuclei POC 正反例以及 JSON / HTML 报告。测试使用临时目录和本地模板，不下载官方模板或扫描外部目标；还检查版本命令不会创建独立 Nuclei 的配置目录、继承外部配置目录和排除标签不影响扫描、全局配置文件保持原有字节，以及模板根目录下的相对路径字典能正常加载。不覆盖 Gatekeeper 下载隔离、Apple 签名 / 公证或所有操作系统版本。
 
 本地可对已构建的当前平台程序运行相同冒烟检查（路径须指向本机可执行文件）：
 
@@ -111,7 +111,7 @@ macOS 工作流由 Release 调用，也可单独手动运行；普通分支推�
 DDDD_SMOKE_BINARY=/absolute/path/to/dddd go test ./cmd/dddd -run '^TestReleaseBinarySmoke$' -count=1 -v
 ```
 
-macOS 原生构建沿用 `cmd/dddd/main.go` 中的版本号。冒烟检查通过后，将同一个程序和 `checksums.txt`、许可文件打成 `dddd-next_<版本>_darwin_arm64.tar.gz`，再上传为 `dddd-next-macos-arm64` Actions 产物，保留 90 天；不通过测试时不会上传。使用 tar 保留可执行权限，外层 ZIP 由 Actions 生成。登录 GitHub 后可在成功构建记录的 Artifacts 区域下载，无需升版本、创建标签或发布 Release。
+原生构建沿用 `cmd/dddd/main.go` 中的版本号。每个平台冒烟检查通过后，将同一个程序和 `checksums.txt`、许可文件打成 `dddd-next_<版本>_<系统>_<架构>.tar.gz`，再上传为 `dddd-next-<系统>-<架构>` Actions 产物（系统名称为 `windows`、`linux` 或 `darwin`），保留 90 天；该平台不通过测试时不会上传。Windows 包内程序名为 `dddd.exe`，其他平台为 `dddd`。使用 tar 保留可执行权限，外层 ZIP 由 Actions 生成。登录 GitHub 后可在成功构建记录的 Artifacts 区域下载，无需升版本、创建标签或发布 Release。
 
 最终 GoReleaser 资产仍单独生成并使用 Release 版本号，不宣称与 Actions 构建包逐字节相同。下一次正式发布时应根据实际内容编写发布说明，注明首次提供的 macOS arm64 资产及未使用 Apple 开发者签名 / 未公证限制，不应追溯修改旧版发布说明。
 

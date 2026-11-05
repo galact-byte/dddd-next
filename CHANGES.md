@@ -1,5 +1,12 @@
 # 修改记录 — dddd-next
 
+## 未发布 — 四平台并行原生验证
+
+- 将 macOS 专用工作流统一为 `.github/workflows/native-build.yml`，Windows amd64、Linux amd64 / arm64、macOS arm64 在各自原生 runner 上并行执行全仓测试、构建和实际程序冒烟；单个平台失败不取消其他平台验证，四个平台全部成功后才允许 GoReleaser 发布。
+- 各平台分别上传包含程序、校验和及许可文件的 Actions 下载包，保留 90 天；Windows 打包步骤转换原生路径，兼容盘符和空格。README 与开发文档同步更新入口和资产名称。
+- 普通分支推送和 PR 不触发构建；原生工作流仅接受手动或复用调用，Release 保留 `v*` 标签及手动触发入口。
+- 本地验证：`actionlint v1.7.7`、`git diff --check` 通过；提取工作流中的打包脚本，以已有 Windows 程序和含空格的原生临时路径执行，产物名称与 SHA-256 校验通过。本次未运行远端 CI，四平台原生执行结果需由后续手动或标签构建验证。
+
 ## v0.1.54 — 发布准备与配置隔离复核
 
 - 源码版本更新为 `0.1.54`；`release_note.md` 汇总自 v0.1.53 以来的 SDK 配置隔离、相对字典加载修复、升级文件名同步和 macOS ARM64 支持，发布工作流继续通过 `--release-notes release_note.md` 读取该文件。
