@@ -29,6 +29,7 @@ type binaryFixture struct {
 	requests                       []string
 	authorization                  map[string]string
 	draft, prerelease              bool
+	beforeBinary                   func()
 }
 
 func newBinaryFixture(t *testing.T) (*BinaryUpdater, *binaryFixture) {
@@ -69,6 +70,9 @@ func newBinaryFixture(t *testing.T) (*BinaryUpdater, *binaryFixture) {
 				fmt.Fprintf(w, "%x  %s\n", sha256.Sum256([]byte(f.payload)), f.asset)
 			}
 		case "/binary":
+			if f.beforeBinary != nil {
+				f.beforeBinary()
+			}
 			fmt.Fprint(w, f.payload)
 		default:
 			http.NotFound(w, r)
@@ -110,6 +114,148 @@ func TestBinaryUpdateReplacesExecutable(t *testing.T) {
 			}
 			assertBinaryContent(t, u.targetPath, f.payload)
 		})
+	}
+}
+
+func TestBinaryUpdateRenamesVersionedExecutable(t *testing.T) {
+	for _, tc := range []struct{ before, after string }{
+		{"dddd0.1.48.exe", "dddd0.1.49.exe"},
+		{"dddd0.1.47.exe", "dddd0.1.49.exe"},
+		{"dddd-next_0.1.48_windows_amd64.exe", "dddd-next_0.1.49_windows_amd64.exe"},
+		{"dddd-next_0.1.48_linux_amd64", "dddd-next_0.1.49_linux_amd64"},
+		{"dddd-next_0.1.48_linux_arm64", "dddd-next_0.1.49_linux_arm64"},
+		{"dddd-next_0.1.48_darwin_arm64", "dddd-next_0.1.49_darwin_arm64"},
+		{"dddd-v0.1.48.exe", "dddd-v0.1.49.exe"},
+		{"dddd.exe", "dddd.exe"},
+		{"dddd", "dddd"},
+		{"custom scanner.exe", "custom scanner.exe"},
+		{"custom0.1.48.exe", "custom0.1.48.exe"},
+	} {
+		t.Run(tc.before, func(t *testing.T) {
+			u, f := newBinaryFixture(t)
+			before := filepath.Join(filepath.Dir(u.targetPath), tc.before)
+			after := filepath.Join(filepath.Dir(u.targetPath), tc.after)
+			if err := os.Rename(u.targetPath, before); err != nil {
+				t.Fatal(err)
+			}
+			u.targetPath = before
+			result, err := u.Update(context.Background())
+			if err != nil || !result.Updated {
+				t.Fatalf("update = %+v, %v", result, err)
+			}
+			assertBinaryContent(t, after, f.payload)
+			if before != after {
+				if _, err := os.Lstat(before); !os.IsNotExist(err) {
+					t.Fatalf("old executable still exists: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestBinaryVersionedUpdateFailureRetainsOriginal(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, *binaryFixture, string)
+	}{
+		{"destination file", func(t *testing.T, _ *binaryFixture, destination string) {
+			if err := os.WriteFile(destination, []byte("keep existing file"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"destination created during download", func(t *testing.T, f *binaryFixture, destination string) {
+			f.beforeBinary = func() {
+				if err := os.WriteFile(destination, []byte("keep existing file"), 0600); err != nil {
+					t.Error(err)
+				}
+			}
+		}},
+		{"destination directory", func(t *testing.T, _ *binaryFixture, destination string) {
+			if err := os.Mkdir(destination, 0755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"checksum mismatch", func(_ *testing.T, f *binaryFixture, _ string) {
+			f.checksums = fmt.Sprintf("%064d  %s", 0, f.asset)
+		}},
+		{"short download", func(_ *testing.T, f *binaryFixture, _ string) { f.size++ }},
+		{"binary download fails", func(_ *testing.T, f *binaryFixture, _ string) { f.status["/binary"] = 502 }},
+		{"replacement fails", func(t *testing.T, _ *binaryFixture, destination string) {
+			blocker := filepath.Join(filepath.Dir(destination), "."+filepath.Base(destination)+".old")
+			if err := os.Mkdir(blocker, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(blocker, "occupied"), []byte("keep"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, f := newBinaryFixture(t)
+			original := filepath.Join(filepath.Dir(u.targetPath), "dddd0.1.48.exe")
+			destination := filepath.Join(filepath.Dir(u.targetPath), "dddd0.1.49.exe")
+			if err := os.Rename(u.targetPath, original); err != nil {
+				t.Fatal(err)
+			}
+			u.targetPath = original
+			tc.setup(t, f, destination)
+			result, err := u.Update(context.Background())
+			if err == nil || result.Updated {
+				t.Fatalf("update = %+v, %v; want failure", result, err)
+			}
+			assertBinaryContent(t, original, "old executable")
+			switch tc.name {
+			case "destination file", "destination created during download":
+				assertBinaryContent(t, destination, "keep existing file")
+			case "destination directory":
+				if info, err := os.Stat(destination); err != nil || !info.IsDir() {
+					t.Fatalf("existing directory not retained: %v", err)
+				}
+			default:
+				if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+					t.Fatalf("incomplete update remains: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestBinaryVersionedCheckDoesNotRename(t *testing.T) {
+	u, _ := newBinaryFixture(t)
+	original := filepath.Join(filepath.Dir(u.targetPath), "dddd0.1.48.exe")
+	if err := os.Rename(u.targetPath, original); err != nil {
+		t.Fatal(err)
+	}
+	u.targetPath = original
+	result, err := u.Check(context.Background())
+	if err != nil || !result.Available || result.Updated {
+		t.Fatalf("check = %+v, %v", result, err)
+	}
+	assertBinaryContent(t, original, "old executable")
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(original), "dddd0.1.49.exe")); !os.IsNotExist(err) {
+		t.Fatalf("check created new executable: %v", err)
+	}
+}
+
+func TestBinaryUpdateThroughSymlinkKeepsLinkWorking(t *testing.T) {
+	u, f := newBinaryFixture(t)
+	original := filepath.Join(filepath.Dir(u.targetPath), "dddd0.1.48.exe")
+	if err := os.Rename(u.targetPath, original); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(original), "scanner.exe")
+	if err := os.Symlink(original, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	u.targetPath = link
+	result, err := u.Update(context.Background())
+	if err != nil || !result.Updated {
+		t.Fatalf("update = %+v, %v", result, err)
+	}
+	assertBinaryContent(t, link, f.payload)
+	assertBinaryContent(t, original, f.payload)
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("launcher symlink not retained: %v", err)
 	}
 }
 
@@ -281,14 +427,14 @@ func TestBinaryUpdateCancellation(t *testing.T) {
 func TestBinaryUpdateRunningExecutable(t *testing.T) {
 	const marker = "dddd-next updated executable probe\n"
 	if mode := os.Getenv("DDDD_TEST_UPDATE_MODE"); mode != "" {
-		if mode == "probe" {
+		if mode == "probe" || mode == "probe-original" {
 			exe, err := os.Executable()
 			if err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(exe)
-			if err != nil || !strings.HasSuffix(string(data), marker) {
-				t.Fatal("replacement executable marker missing", err)
+			if err != nil || strings.HasSuffix(string(data), marker) != (mode == "probe") {
+				t.Fatal("unexpected executable contents", err)
 			}
 			return
 		}
@@ -306,12 +452,17 @@ func TestBinaryUpdateRunningExecutable(t *testing.T) {
 		u.releaseURL = os.Getenv("DDDD_TEST_UPDATE_URL")
 		u.client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: roots}
 		result, err := u.Update(context.Background())
+		if mode == "update-retirement-blocked" {
+			if err == nil || result.Updated || !strings.Contains(err.Error(), "retire old executable") {
+				t.Fatalf("blocked update = %+v, %v", result, err)
+			}
+			return
+		}
 		if err != nil || !result.Updated {
 			t.Fatalf("running executable update = %+v, %v", result, err)
 		}
 		return
 	}
-	u, f := newBinaryFixture(t)
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -320,25 +471,70 @@ func TestBinaryUpdateRunningExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(u.targetPath, original, 0755); err != nil {
-		t.Fatal(err)
-	}
-	f.asset = "dddd-next_0.1.49_" + runtime.GOOS + "_" + runtime.GOARCH
-	if runtime.GOOS == "windows" {
-		f.asset += ".exe"
-	}
-	f.payload = string(original) + marker
-	f.size = len(f.payload)
-	for _, mode := range []string{"update", "probe"} {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		cmd := exec.CommandContext(ctx, u.targetPath, "-test.run=^TestBinaryUpdateRunningExecutable$", "-test.v")
-		cmd.Env = append(os.Environ(), "DDDD_TEST_UPDATE_MODE="+mode, "DDDD_TEST_UPDATE_URL="+u.releaseURL, "DDDD_TEST_UPDATE_CERT="+f.certificate)
-		output, err := cmd.CombinedOutput()
-		cancel()
-		if err != nil {
-			t.Fatalf("%s subprocess: %v\n%s", mode, err, output)
+	for _, tc := range []struct {
+		before, after string
+		blocked       bool
+	}{
+		{"custom scanner.exe", "custom scanner.exe", false},
+		{"dddd0.1.48.exe", "dddd0.1.49.exe", false},
+		{"dddd0.1.47.exe", "dddd0.1.49.exe", false},
+		{"dddd0.1.48.exe", "dddd0.1.49.exe", true},
+	} {
+		name := tc.before
+		if tc.blocked {
+			if runtime.GOOS != "windows" {
+				continue // Unix 允许删除运行中的文件，无需移动到 .old 路径。
+			}
+			name += " retirement blocked"
 		}
-		t.Logf("%s subprocess:\n%s", mode, output)
+		t.Run(name, func(t *testing.T) {
+			u, f := newBinaryFixture(t)
+			u.targetPath = filepath.Join(filepath.Dir(u.targetPath), tc.before)
+			if err := os.WriteFile(u.targetPath, original, 0755); err != nil {
+				t.Fatal(err)
+			}
+			f.asset = "dddd-next_0.1.49_" + runtime.GOOS + "_" + runtime.GOARCH
+			if runtime.GOOS == "windows" {
+				f.asset += ".exe"
+			}
+			f.payload = string(original) + marker
+			f.size = len(f.payload)
+			modes := []string{"update", "probe"}
+			if tc.blocked {
+				blocker := filepath.Join(filepath.Dir(u.targetPath), "."+tc.before+".old")
+				if err := os.Mkdir(blocker, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(blocker, "occupied"), []byte("keep"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				modes = []string{"update-retirement-blocked", "probe-original"}
+			}
+			for _, mode := range modes {
+				commandPath := u.targetPath
+				if mode == "probe" {
+					commandPath = filepath.Join(filepath.Dir(u.targetPath), tc.after)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				cmd := exec.CommandContext(ctx, commandPath, "-test.run=^TestBinaryUpdateRunningExecutable$", "-test.v")
+				cmd.Env = append(os.Environ(), "DDDD_TEST_UPDATE_MODE="+mode, "DDDD_TEST_UPDATE_URL="+u.releaseURL, "DDDD_TEST_UPDATE_CERT="+f.certificate)
+				output, err := cmd.CombinedOutput()
+				cancel()
+				if err != nil {
+					t.Fatalf("%s subprocess: %v\n%s", mode, err, output)
+				}
+				t.Logf("%s subprocess:\n%s", mode, output)
+			}
+			if tc.blocked {
+				if _, err := os.Lstat(filepath.Join(filepath.Dir(u.targetPath), tc.after)); !os.IsNotExist(err) {
+					t.Fatalf("failed update left new executable: %v", err)
+				}
+			} else if tc.before != tc.after {
+				if _, err := os.Lstat(u.targetPath); !os.IsNotExist(err) {
+					t.Fatalf("old executable still exists: %v", err)
+				}
+			}
+		})
 	}
 }
 

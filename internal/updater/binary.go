@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -22,6 +24,8 @@ import (
 )
 
 const maxBinarySize = 512 << 20
+
+var versionedBinaryName = regexp.MustCompile(`(?i)^(dddd(?:-next)?[-_]?v?)[0-9]+\.[0-9]+\.[0-9]+((?:_(?:windows|linux|darwin)_(?:amd64|arm64))?(?:\.exe)?)$`)
 
 // BinaryUpdater 从本项目的 GitHub Release 更新单文件程序。
 // 模板更新仍由 Updater 负责，两者不会隐式触发对方。
@@ -148,6 +152,13 @@ func (u *BinaryUpdater) Update(ctx context.Context) (BinaryRelease, error) {
 			return result, err
 		}
 	}
+	launchPath := target
+	if u.targetPath == "" {
+		if path, err := exec.LookPath(os.Args[0]); err == nil {
+			launchPath = path
+		}
+	}
+	launchInfo, _ := os.Lstat(launchPath)
 	// 跟随启动程序的符号链接，避免把链接本身替换为另一份程序。
 	target, err = filepath.EvalSymlinks(target)
 	if err != nil {
@@ -156,6 +167,18 @@ func (u *BinaryUpdater) Update(ctx context.Context) (BinaryRelease, error) {
 	info, err := os.Stat(target)
 	if err != nil || !info.Mode().IsRegular() {
 		return result, fmt.Errorf("executable is not a regular file: %s", target)
+	}
+	destination := target
+	// 符号链接启动时保持目标文件名，使已有链接下次仍可使用。
+	if parts := versionedBinaryName.FindStringSubmatch(filepath.Base(target)); parts != nil && launchInfo != nil && launchInfo.Mode()&os.ModeSymlink == 0 {
+		destination = filepath.Join(filepath.Dir(target), parts[1]+result.Version+parts[2])
+	}
+	if destination != target {
+		if _, err := os.Lstat(destination); err == nil {
+			return result, fmt.Errorf("update destination already exists: %s; original executable retained", destination)
+		} else if !os.IsNotExist(err) {
+			return result, fmt.Errorf("check update destination: %w", err)
+		}
 	}
 	opts := selfupdate.Options{TargetPath: target, TargetMode: info.Mode().Perm(), Hash: crypto.SHA256}
 	if err := opts.CheckPermissions(); err != nil {
@@ -195,7 +218,12 @@ func (u *BinaryUpdater) Update(ctx context.Context) (BinaryRelease, error) {
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if err := selfupdate.Apply(bytes.NewReader(binary), opts); err != nil {
+	if destination != target {
+		if err := applyRenamedBinary(binary, opts, destination); err != nil {
+			return result, err
+		}
+		fmt.Fprintf(u.progress, "[updater] executable renamed: %s\n", destination)
+	} else if err := selfupdate.Apply(bytes.NewReader(binary), opts); err != nil {
 		if rollbackErr := selfupdate.RollbackError(err); rollbackErr != nil {
 			return result, fmt.Errorf("update failed: %v; rollback failed: %v; recover %s manually", err, rollbackErr, target)
 		}
@@ -203,6 +231,41 @@ func (u *BinaryUpdater) Update(ctx context.Context) (BinaryRelease, error) {
 	}
 	result.Updated = true
 	return result, nil
+}
+
+// applyRenamedBinary 先独占新路径，校验并安装成功后才移走原程序。
+// 原程序在整个安装过程中保持可用，目标重名或替换失败不会覆盖它。
+func applyRenamedBinary(binary []byte, opts selfupdate.Options, destination string) (err error) {
+	file, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, opts.TargetMode)
+	if err != nil {
+		return fmt.Errorf("reserve update destination (original executable retained): %w", err)
+	}
+	defer func() {
+		if err != nil {
+			if cleanupErr := os.Remove(destination); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+				err = fmt.Errorf("%w; remove incomplete update %s manually: %v", err, destination, cleanupErr)
+			}
+		}
+	}()
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close update destination (original executable retained): %w", err)
+	}
+	original := opts.TargetPath
+	opts.TargetPath = destination
+	defer os.Remove(filepath.Join(filepath.Dir(destination), "."+filepath.Base(destination)+".new"))
+	if err := selfupdate.Apply(bytes.NewReader(binary), opts); err != nil {
+		return fmt.Errorf("update failed (original executable retained): %w", err)
+	}
+	if err := os.Remove(original); err != nil {
+		// Windows 无法删除仍在运行的程序，但允许将其移到旧文件路径。
+		old := filepath.Join(filepath.Dir(original), "."+filepath.Base(original)+".old")
+		_ = os.Remove(old)
+		if err := os.Rename(original, old); err != nil {
+			return fmt.Errorf("retire old executable (original executable retained): %w", err)
+		}
+		_ = os.Remove(old)
+	}
+	return nil
 }
 
 func (u *BinaryUpdater) get(ctx context.Context, address string, limit int64) ([]byte, error) {
