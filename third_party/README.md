@@ -3,7 +3,7 @@
 ## httpx v1.9.0
 
 - 上游模块：`github.com/projectdiscovery/httpx v1.9.0`。
-- 本地目录：`third_party/httpx/`，由已安装的该版本模块原样复制。
+- 本地目录：`third_party/httpx/`，保留上游完整源码和运行所需资源。
 - 许可证：MIT，保留 `httpx/LICENSE.md`、上游源码和版权声明。
 - 接入方式：根目录 `go.mod` 的 `replace`。普通 `go test` / `go build` 自动使用本地副本，不需要临时构建参数。
 - 补丁：`httpx-ratelimiter.patch`。除 `runner/runner.go` 四行外，本地副本与上游模块相同；没有改扫描速率、网络超时或公开 API。
@@ -12,7 +12,7 @@
 
 httpx 把已经启动后台协程的 `ratelimit.Limiter` 按值复制。后台协程更新原子计数器时，结构体复制产生数据竞争。补丁将字段保存为指针，并删除三个构造调用前的解引用，避免复制正在使用的限速器。
 
-修复前的 race 证据保存在本地 `build/review-evidence/full-fix/race.txt`；可随仓库运行的回归位于 `internal/discovery/httpprobe/` 和 `internal/app/`，包含 HTTP 指纹、图标采集及取消流程。
+相关回归位于 `internal/discovery/httpprobe/` 和 `internal/app/`，包含 HTTP 指纹、图标采集及取消流程。
 
 ### 日常使用与升级
 
@@ -30,7 +30,7 @@ go vet -p=2 ./...
 go build ./cmd/dddd
 ```
 
-交付前还要验证 Linux amd64 交叉编译；这不等于 Linux SYN 实机测试。
+升级后还需检查 Linux amd64 构建；SYN 扫描的原生权限及驱动依赖需在对应系统另行测试。
 
 ### 注意事项
 
