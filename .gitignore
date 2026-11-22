@@ -73,3 +73,9 @@ output/
 /1.txt
 /docs/superpowers/
 /build/
+
+# 仅供本地使用的开发笔记、调研和过程记录
+/docs/DEV_NOTES.md
+/docs/RESEARCH_*.md
+/docs/ARCHITECTURE.md
+/CHANGES.md

@@ -114,5 +114,3 @@ DDDD_SMOKE_BINARY=/absolute/path/to/dddd go test ./cmd/dddd -run '^TestReleaseBi
 原生构建沿用 `cmd/dddd/main.go` 中的版本号。每个平台冒烟检查通过后，将同一个程序和 `checksums.txt`、许可文件打成 `dddd-next_<版本>_<系统>_<架构>.tar.gz`，再上传为 `dddd-next-<系统>-<架构>` Actions 产物（系统名称为 `windows`、`linux` 或 `darwin`），保留 90 天；该平台不通过测试时不会上传。Windows 包内程序名为 `dddd.exe`，其他平台为 `dddd`。使用 tar 保留可执行权限，外层 ZIP 由 Actions 生成。登录 GitHub 后可在成功构建记录的 Artifacts 区域下载，无需升版本、创建标签或发布 Release。
 
 最终 GoReleaser 资产仍单独生成并使用 Release 版本号，不宣称与 Actions 构建包逐字节相同。下一次正式发布时应根据实际内容编写发布说明，注明首次提供的 macOS arm64 资产及未使用 Apple 开发者签名 / 未公证限制，不应追溯修改旧版发布说明。
-
-[ARCHITECTURE.md](ARCHITECTURE.md) 是早期设计稿，包含未落地或已改变的设想，例如 Cobra、统一 slog、模板来源参数等，不应作为当前功能说明；当前行为以代码和使用文档为准。
