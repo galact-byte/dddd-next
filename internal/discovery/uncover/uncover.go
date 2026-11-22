@@ -22,6 +22,7 @@ type Options struct {
 	Timeout    int
 	Proxy      string
 	FofaServer string // empty uses the official FOFA server
+	HunterFofa bool   // explicitly selected Hunter -> FOFA enrichment
 }
 
 func DefaultOptions() Options {
@@ -63,6 +64,21 @@ func (s *Source) Query(ctx context.Context, query string, limit int) ([]types.As
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+
+	if s.opts.HunterFofa {
+		var extra []string
+		for _, agent := range s.opts.Agents {
+			if agent != "fofa" && agent != "hunter" {
+				extra = append(extra, agent)
+			}
+		}
+		return queryHunterFofa(ctx, query, limit, extra, func(ctx context.Context, agent, expression string, count int) ([]types.Asset, error) {
+			opts := s.opts
+			opts.HunterFofa = false
+			opts.Agents = []string{agent}
+			return New(opts).Query(ctx, expression, count)
+		})
 	}
 
 	u, err := pduncover.New(&pduncover.Options{

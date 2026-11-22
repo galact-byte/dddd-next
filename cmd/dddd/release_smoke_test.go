@@ -171,8 +171,11 @@ http:
 	if err := os.WriteFile(privateIgnore, privateRules, 0600); err != nil {
 		t.Fatal(err)
 	}
-	run(0, "-t", server.URL, "-no-dir", "-poc", "ci-smoke", "-nt", templates,
+	ignoredOutput := run(0, "-t", server.URL, "-no-dir", "-poc", "ci-smoke", "-nt", templates,
 		"-ni", "-o", "ignored.json", "-ot", "json", "-ho", "")
+	if !strings.Contains(ignoredOutput, "nuclei outcome: skipped (all candidate templates filtered out)") {
+		t.Fatalf("missing filtered outcome:\n%s", ignoredOutput)
+	}
 	ignored, err := filepath.Glob(filepath.Join(workDir, "output", "*", "ignored.json"))
 	if err != nil || len(ignored) != 1 {
 		t.Fatalf("ignored reports = %v, %v", ignored, err)

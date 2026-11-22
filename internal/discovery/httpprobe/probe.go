@@ -59,6 +59,9 @@ type Options struct {
 	// RequestPaths probes each path on every target (httpx -path). Used for
 	// product-path fingerprinting (/nacos/, /druid/, ...); empty probes the root.
 	RequestPaths []string
+	// OnComplete observes HTTP result events, including failures. It may run
+	// concurrently; these events are not a one-to-one count of input targets.
+	OnComplete func(error)
 }
 
 // Probe drives a single httpx scan run.
@@ -87,8 +90,7 @@ func New(opts Options) *Probe {
 // closes after the scan drains. Cancellation stops dispatching new targets;
 // already dispatched requests finish within the configured request timeout.
 //
-// Failed probes (no HTTP response) are dropped silently. Callers that
-// want them can flip a future Options.IncludeFailed switch.
+// Failed probes are not emitted as responses; OnComplete can observe them.
 func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -116,7 +118,9 @@ func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 		// httpx writes every probed URL to stdout by default; we surface results
 		// through OnResult instead, so silence its own output (it floods the
 		// product-path stage with hundreds of lines).
-		DisableStdout:             true,
+		DisableStdout: true,
+		// httpx drops failed result events unless probe status is enabled.
+		Probe:                     p.opts.OnComplete != nil,
 		MaxResponseBodySizeToRead: p.opts.MaxBodyBytes,
 		MaxResponseBodySizeToSave: p.opts.MaxBodyBytes,
 		// httpx fills Result.ResponseBody / RawHeaders only when this is set
@@ -124,6 +128,13 @@ func (p *Probe) Run(ctx context.Context) (<-chan Response, error) {
 		ResponseInStdout: true,
 		Favicon:          true,
 		OnResult: func(r runner.Result) {
+			if p.opts.OnComplete != nil {
+				resultErr := r.Err
+				if r.Failed && resultErr == nil {
+					resultErr = fmt.Errorf("HTTP probe failed: %s", r.Error)
+				}
+				p.opts.OnComplete(resultErr)
+			}
 			if r.Failed || ctx.Err() != nil {
 				return
 			}

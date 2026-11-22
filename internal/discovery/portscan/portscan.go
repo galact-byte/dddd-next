@@ -125,6 +125,8 @@ type Options struct {
 	Ports          []int
 	TimeoutSeconds int
 	Threads        int
+	// OnComplete runs concurrently once per host/port after its final attempt.
+	OnComplete func(error)
 }
 
 func DefaultOptions() Options {
@@ -132,9 +134,10 @@ func DefaultOptions() Options {
 }
 
 type Scanner struct {
-	ports   []int
-	timeout time.Duration
-	threads int
+	ports      []int
+	timeout    time.Duration
+	threads    int
+	onComplete func(error)
 }
 
 // New normalizes Options (dedupes/sorts ports, applies defaults) and returns a
@@ -152,7 +155,7 @@ func New(opts Options) *Scanner {
 	if threads <= 0 {
 		threads = 500
 	}
-	return &Scanner{ports: ports, timeout: timeout, threads: threads}
+	return &Scanner{ports: ports, timeout: timeout, threads: threads, onComplete: opts.OnComplete}
 }
 
 // Scan probes every host×port pair and emits one Result per OPEN port. The
@@ -183,7 +186,11 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string) <-chan Result {
 					defer wg.Done()
 					defer func() { <-sem }()
 
-					if dialOpen(ctx, host, port, s.timeout) {
+					open, err := dialOpen(ctx, host, port, s.timeout)
+					if s.onComplete != nil {
+						s.onComplete(err)
+					}
+					if open {
 						select {
 						case out <- Result{Host: host, Port: port}:
 						case <-ctx.Done():
@@ -204,26 +211,28 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string) <-chan Result {
 // booting Java app like Nacos), which would wrongly read as a closed port — so a
 // timed-out attempt is retried once. A refused connection (RST) is definitively
 // closed and returns immediately, keeping full-range scans fast.
-func dialOpen(ctx context.Context, host string, port int, timeout time.Duration) bool {
+func dialOpen(ctx context.Context, host string, port int, timeout time.Duration) (bool, error) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		d := net.Dialer{Timeout: timeout}
 		conn, err := d.DialContext(ctx, "tcp", addr)
 		if err == nil {
 			_ = conn.Close()
-			return true
+			return true, nil
 		}
+		lastErr = err
 		if ctx.Err() != nil {
-			return false
+			return false, err
 		}
 		// Only a timeout warrants a retry; anything else (refused, unreachable)
 		// is a definitive answer and retrying just wastes time.
 		var netErr net.Error
 		if !errors.As(err, &netErr) || !netErr.Timeout() {
-			return false
+			return false, err
 		}
 	}
-	return false
+	return false, lastErr
 }
 
 // ExpandHosts turns IP / CIDR / IP-range specs into a deduplicated list of IPv4

@@ -62,15 +62,18 @@ type Target struct {
 
 // Asset is what a recon source (Hunter / Fofa / Quake) hands back.
 type Asset struct {
-	Source    string
-	Host      string
-	Port      int
-	URL       string
-	Title     string
-	Component string
-	Banner    string
-	IP        string
-	Domain    string
+	Source       string
+	Host         string
+	Port         int
+	URL          string
+	Title        string
+	Component    string
+	Banner       string
+	IP           string
+	Domain       string
+	Service      string
+	Status       string
+	Fingerprints []string
 }
 
 // Severity matches the nuclei taxonomy.

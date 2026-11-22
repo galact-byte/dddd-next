@@ -1,13 +1,30 @@
 package app
 
 import (
+	"os"
+	"slices"
 	"strings"
 
 	"dddd-next/internal/config"
 	"dddd-next/internal/discovery/httpprobe"
+	"dddd-next/internal/discovery/uncover"
 	"dddd-next/internal/scanner/gopocs"
 	"dddd-next/internal/scanner/nuclei"
 )
+
+func buildReconOptions(cfg config.Config) uncover.Options {
+	opts := uncover.DefaultOptions()
+	opts.FofaServer = os.Getenv("FOFA_SERVER")
+	opts.Proxy = cfg.ProxyURL
+	if len(cfg.ReconAgents) > 0 {
+		opts.Agents = append([]string(nil), cfg.ReconAgents...)
+		opts.HunterFofa = slices.Contains(cfg.ReconAgents, "hunter") && slices.Contains(cfg.ReconAgents, "fofa")
+	}
+	if cfg.ReconLimit > 0 {
+		opts.Limit = cfg.ReconLimit
+	}
+	return opts
+}
 
 func shouldRunGoPocs(cfg config.Config) bool {
 	return !cfg.NoBrute && !cfg.NoGoPoc && !cfg.NoPoc && strings.TrimSpace(cfg.PocName) == ""

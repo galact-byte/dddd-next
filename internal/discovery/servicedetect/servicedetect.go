@@ -5,6 +5,7 @@ package servicedetect
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"sync"
@@ -35,6 +36,8 @@ type Options struct {
 	// FastMode false (default) probes every plugin, not just the port's default
 	// service — the whole point: catching services on odd ports.
 	FastMode bool
+	// OnComplete may run concurrently, including for unresolved endpoints.
+	OnComplete func(error)
 }
 
 func DefaultOptions() Options {
@@ -76,8 +79,15 @@ func (d *Detector) Detect(ctx context.Context, endpoints []Endpoint) <-chan Resu
 		var wg sync.WaitGroup
 
 		for _, ep := range endpoints {
+			if ctx.Err() != nil {
+				wg.Wait()
+				return
+			}
 			addr, ok := resolveAddr(ep.Host)
 			if !ok {
+				if d.opts.OnComplete != nil {
+					d.opts.OnComplete(fmt.Errorf("unable to resolve endpoint"))
+				}
 				continue
 			}
 			select {
@@ -90,7 +100,10 @@ func (d *Detector) Detect(ctx context.Context, endpoints []Endpoint) <-chan Resu
 			go func(ep Endpoint, addr netip.Addr) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				d.detectOne(ctx, ep, addr, out)
+				err := d.detectOne(ctx, ep, addr, out)
+				if d.opts.OnComplete != nil {
+					d.opts.OnComplete(err)
+				}
 			}(ep, addr)
 		}
 		wg.Wait()
@@ -99,14 +112,15 @@ func (d *Detector) Detect(ctx context.Context, endpoints []Endpoint) <-chan Resu
 	return out
 }
 
-func (d *Detector) detectOne(ctx context.Context, ep Endpoint, addr netip.Addr, out chan<- Result) {
+func (d *Detector) detectOne(ctx context.Context, ep Endpoint, addr netip.Addr, out chan<- Result) error {
 	target := plugins.Target{
 		Address: netip.AddrPortFrom(addr, uint16(ep.Port)),
 		Host:    ep.Host,
 	}
 	res := Result{Host: ep.Host, Port: ep.Port}
 	// SimpleScanTarget takes no ctx; it bounds itself with DefaultTimeout.
-	if svc, err := d.config.SimpleScanTarget(target); err == nil && svc != nil {
+	svc, scanErr := d.config.SimpleScanTarget(target)
+	if scanErr == nil && svc != nil {
 		res.Service = svc.Protocol
 		res.Version = svc.Version
 		res.TLS = svc.TLS
@@ -114,7 +128,9 @@ func (d *Detector) detectOne(ctx context.Context, ep Endpoint, addr netip.Addr, 
 	select {
 	case out <- res:
 	case <-ctx.Done():
+		return ctx.Err()
 	}
+	return scanErr
 }
 
 // resolveAddr turns an IP literal or hostname into a netip.Addr; fingerprintx

@@ -31,7 +31,9 @@ import (
 
 	nucleilib "github.com/projectdiscovery/nuclei/v3/lib"
 	nucleiconfig "github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
+	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/index"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
+	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
 )
 
 // Options configures a Scanner. Use DefaultOptions() for safe baseline values.
@@ -172,11 +174,47 @@ func (s *Scanner) Scan(ctx context.Context, targets []string) (findings <-chan t
 		}
 
 		if execErr := s.engine.ExecuteCallbackWithCtx(ctx, callback); execErr != nil {
+			if errors.Is(execErr, nucleilib.ErrNoTemplatesAvailable) && ctx.Err() == nil && s.allTemplatesFiltered(ctx) {
+				errs <- ErrTemplatesFiltered
+				return
+			}
 			errs <- fmt.Errorf("nuclei: execute: %w", execErr)
 		}
 	}()
 
 	return out, errs, nil
+}
+
+// ErrTemplatesFiltered means a batch had candidates but none passed its configured filters.
+var ErrTemplatesFiltered = errors.New("nuclei: all candidate templates filtered out")
+
+// The SDK reports the same empty-store error for bad templates and filtered templates.
+// Inspect metadata only, and preserve the error unless every candidate is accounted for.
+func (s *Scanner) allTemplatesFiltered(ctx context.Context) bool {
+	exec := s.engine.GetExecuterOptions()
+	opts := exec.Options
+	filter := index.Filter{Tags: opts.Tags, IncludeTags: opts.IncludeTags, ExcludeTags: opts.ExcludeTags, IDs: opts.IncludeIds, ExcludeIDs: opts.ExcludeIds, Severities: opts.Severities, ExcludeSeverities: opts.ExcludeSeverities}
+	if filter.IsEmpty() {
+		return false
+	}
+	paths, failures := exec.Catalog.GetTemplatesPath(opts.Templates)
+	if len(paths) == 0 || len(failures) > 0 {
+		return false
+	}
+	for _, path := range paths {
+		if ctx.Err() != nil {
+			return false
+		}
+		value, err := s.engine.GetParser().ParseTemplate(path, exec.Catalog)
+		if err != nil {
+			return false
+		}
+		tpl, ok := value.(*templates.Template)
+		if !ok || tpl == nil || filter.Matches(index.NewMetadataFromTemplate(path, tpl)) {
+			return false
+		}
+	}
+	return true
 }
 
 // Close releases resources held by the underlying nuclei engine. Safe to call

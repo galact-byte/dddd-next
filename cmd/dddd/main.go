@@ -25,7 +25,7 @@ import (
 
 const appName = "dddd-next"
 
-var appVersion = "0.1.54"
+var appVersion = "0.1.55"
 
 func main() {
 	loadDotEnv()
@@ -45,6 +45,8 @@ func runCLI(args []string) int {
 			return runUpdate(args[2:])
 		case "upgrade":
 			return runBinaryUpdate(args[2:])
+		case "doctor":
+			return runDoctor(args[2:])
 		}
 	}
 	return runScan(args)
@@ -150,6 +152,9 @@ func prepareOutputPaths(cfg config.Config, outDir string) config.Config {
 	if cfg.HTMLOutput != "" {
 		cfg.HTMLOutput = filepath.Join(outDir, cfg.HTMLOutput)
 	}
+	if cfg.CSVOutput != "" {
+		cfg.CSVOutput = filepath.Join(outDir, cfg.CSVOutput)
+	}
 	if cfg.AuditLog {
 		cfg.AuditLogFile = filepath.Join(outDir, cfg.AuditLogFile)
 	}
@@ -188,6 +193,7 @@ func printHelp() {
 用法：
   dddd -t <目标> [参数]
   dddd <子命令>
+  dddd doctor                         离线检查指纹、映射及模板；doctor --help 查看选项
   dddd help | -h | --help
 
 同一行列出的参数互为别名，单横杠和双横杠均可使用。
@@ -198,6 +204,7 @@ func printHelp() {
   -o, -output <文件>                 结果文件（默认 result.txt）
   -ot, -output-type <text|json>       结果格式（默认 text）
   -ho, -html-output <文件>            HTML 报告（默认 report.html，空字符串关闭）
+  -csv <文件>                        额外导出资产 CSV（默认关闭，不替代漏洞结果）
   -a                                开启审计日志
   -alf, -audit-log-filename <文件>    审计日志文件名（默认 audit.log）
                                     输出保存在 output/<时间戳>/ 下

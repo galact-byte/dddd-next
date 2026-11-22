@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -16,6 +18,7 @@ type Config struct {
 	Output     string
 	OutputType string
 	HTMLOutput string
+	CSVOutput  string
 	AuditLog   bool
 
 	Subdomain          bool
@@ -149,6 +152,7 @@ func ParseArgs(args []string) (Config, error) {
 	fs.StringVar(&cfg.Output, "output", cfg.Output, "result output file (legacy long alias)")
 	fs.StringVar(&cfg.OutputType, "ot", cfg.OutputType, "output format: text | json")
 	fs.StringVar(&cfg.OutputType, "output-type", cfg.OutputType, "output format: text | json (legacy long alias)")
+	fs.StringVar(&cfg.CSVOutput, "csv", cfg.CSVOutput, "additional asset CSV file (disabled by default)")
 	fs.StringVar(&cfg.HTMLOutput, "ho", cfg.HTMLOutput, "HTML report file (empty disables)")
 	fs.StringVar(&cfg.HTMLOutput, "html-output", cfg.HTMLOutput, "HTML report file (legacy long alias)")
 	fs.BoolVar(&cfg.AuditLog, "a", cfg.AuditLog, "enable audit log")
@@ -360,6 +364,29 @@ func (c Config) Validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("config: invalid output type %q (want text|json)", c.OutputType)
+	}
+	if c.CSVOutput != "" {
+		if !filepath.IsLocal(c.CSVOutput) {
+			return errors.New("config: CSV output must be a relative path inside the scan output directory")
+		}
+		outputs := []string{c.Output, c.HTMLOutput}
+		if c.AuditLog {
+			outputs = append(outputs, c.AuditLogFile)
+		}
+		for _, output := range append(outputs, c.CSVOutput) {
+			if runtime.GOOS == "windows" {
+				for _, part := range strings.Split(filepath.FromSlash(output), `\`) {
+					if part != "." && part != ".." && strings.TrimRight(part, " .") != part {
+						return fmt.Errorf("config: ambiguous Windows report path: %q", output)
+					}
+				}
+			}
+		}
+		for _, output := range outputs {
+			if output != "" && strings.EqualFold(filepath.Clean(output), filepath.Clean(c.CSVOutput)) {
+				return fmt.Errorf("config: CSV output conflicts with another report: %s", c.CSVOutput)
+			}
+		}
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

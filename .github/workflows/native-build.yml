@@ -64,7 +64,7 @@ jobs:
       - name: Smoke test executable
         env:
           DDDD_SMOKE_BINARY: ${{ runner.temp }}/${{ matrix.binary }}
-        run: go test -trimpath ./cmd/dddd -run '^TestReleaseBinarySmoke$' -count=1 -v
+        run: go test -trimpath ./cmd/dddd -run '^Test(ReleaseBinarySmoke|PriorityBinarySmoke|BinaryInterruptFinalizesReports)$' -count=1 -v
 
       - name: Package executable
         run: |

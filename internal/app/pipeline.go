@@ -53,6 +53,8 @@ type Pipeline struct {
 	configDir string
 	finger    *fingerprint.Engine
 	reporter  reporter.Reporter
+	assets    *reporter.AssetCSV
+	assetErr  error
 	auditor   *audit.Auditor
 
 	// ipDomains maps an IP to the domains known to resolve to it, feeding the
@@ -82,11 +84,21 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 		return nil, err
 	}
 
+	var assetCSV *reporter.AssetCSV
+	if cfg.CSVOutput != "" {
+		assetCSV, err = reporter.NewAssetCSVFile(cfg.CSVOutput)
+		if err != nil {
+			_ = rep.Close()
+			return nil, fmt.Errorf("app: asset CSV: %w", err)
+		}
+	}
+
 	aud := audit.Disabled()
 	if cfg.AuditLog {
 		a, aerr := audit.NewFile(cfg.AuditLogFile)
 		if aerr != nil {
 			_ = rep.Close()
+			_ = assetCSV.Close()
 			return nil, fmt.Errorf("app: open audit log: %w", aerr)
 		}
 		aud = a
@@ -94,11 +106,19 @@ func New(cfg config.Config, configDir string) (*Pipeline, error) {
 
 	infof("fingerprints loaded: %d rules\n", eng.Size())
 	counter := newCountingReporter(rep)
-	return &Pipeline{cfg: cfg, configDir: configDir, finger: eng, reporter: counter, auditor: aud, ipDomains: make(map[string][]string), counts: counter}, nil
+	return &Pipeline{cfg: cfg, configDir: configDir, finger: eng, reporter: counter, assets: assetCSV, auditor: aud, ipDomains: make(map[string][]string), counts: counter}, nil
 }
 
-func (p *Pipeline) Run(ctx context.Context) error {
+func (p *Pipeline) Run(ctx context.Context) (runErr error) {
+	defer func() {
+		if err := ctx.Err(); err != nil && !errors.Is(runErr, err) {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 	defer p.printSummary()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	probeInputs, directPorts, domains, portscanSpecs, searchQueries, fingerImports := p.parseTargets()
 
@@ -106,6 +126,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return p.runLowPerception(ctx, searchQueries)
 	}
 
+	for _, ep := range directPorts {
+		p.recordAsset(types.Asset{Host: ep.Host, Port: ep.Port, Source: "input", Status: "provided"})
+	}
 	openPorts := append([]portscan.Result(nil), directPorts...)
 	if len(portscanSpecs) > 0 {
 		openPorts = append(openPorts, p.scanPorts(ctx, portscanSpecs)...)
@@ -162,22 +185,26 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		for _, n := range names {
 			_ = p.reporter.WriteFingerprint(target, types.Fingerprint{Name: n, Target: target, Source: "import"})
 		}
+		p.recordAsset(types.Asset{URL: target, Fingerprints: names, Source: "import", Status: "imported"})
 		fpHits[target] = append(fpHits[target], names...)
 		liveURLs = append(liveURLs, target)
 	}
 	liveURLs = dedup(liveURLs)
 
 	if len(liveURLs) > 0 && !p.cfg.NoPoc {
-		p.runNuclei(ctx, liveURLs, fpHits)
+		runErr = p.runNuclei(ctx, liveURLs, fpHits)
 		if shouldRunShiro(p.cfg) {
 			p.shiroScan(ctx, liveURLs)
 		}
 	}
-	return nil
+	return runErr
 }
 
 func (p *Pipeline) Close() error {
-	var errs []error
+	errs := []error{p.assetErr}
+	if err := p.assets.Close(); err != nil {
+		errs = append(errs, err)
+	}
 	if p.reporter != nil {
 		if err := p.reporter.Close(); err != nil {
 			errs = append(errs, err)
@@ -254,6 +281,7 @@ func (p *Pipeline) scanPorts(ctx context.Context, specs []string) []portscan.Res
 
 	open = p.retainPortsWithWarnings(open)
 	for _, r := range open {
+		p.recordAsset(types.Asset{Host: r.Host, Port: r.Port, Source: "portscan", Status: "open"})
 		_ = p.auditor.LogInfo("port-open", map[string]any{"host": r.Host, "port": r.Port})
 	}
 	fmt.Printf("\x1b[32m[*]\x1b[0m open ports: %d\n", len(open))
@@ -281,6 +309,9 @@ func (p *Pipeline) tcpScan(ctx context.Context, hosts []string) []portscan.Resul
 	}
 
 	fmt.Printf("\x1b[32m[*]\x1b[0m TCP port scanning %d host(s) x %d ports...\n", len(hosts), len(opts.Ports))
+	progress := p.progress(ctx, "TCP 端口扫描", "端点", int64(len(hosts))*int64(len(opts.Ports)))
+	defer progress.Close()
+	opts.OnComplete = progress.Advance
 	sc := portscan.New(opts)
 	var open []portscan.Result
 	for r := range sc.Scan(ctx, hosts) {
@@ -349,7 +380,12 @@ func (p *Pipeline) synScan(ctx context.Context, hosts []string) ([]portscan.Resu
 	fmt.Printf("\x1b[36m[SYN]\x1b[0m scanning %d host(s)...\n", len(hosts))
 	opts := synscan.DefaultOptions()
 	opts.Rate = p.cfg.SYNScanRate
+	progress := p.progress(ctx, "SYN 端口扫描", "批次", 1)
+	defer progress.Close()
 	results, err := synscan.Scan(ctx, hosts, spec, opts)
+	if ctx.Err() == nil {
+		progress.Advance(err)
+	}
 	if err != nil {
 		fmt.Printf("\x1b[31m[!]\x1b[0m synscan: %v\n", err)
 		return nil, false
@@ -416,9 +452,12 @@ func (p *Pipeline) bruteForce(ctx context.Context, openPorts []portscan.Result, 
 	infof("weak-credential brute force on %d open port(s)...\n", len(endpoints))
 	opts := buildGoPocOptions(p.cfg, dictDir)
 	eng := gopocs.New(opts)
+	progress := p.progress(ctx, "GoPoC", "漏洞结果", -1)
+	defer progress.Close()
 
 	n := 0
 	for f := range eng.Run(ctx, endpoints) {
+		progress.Advance(nil)
 		printFinding(f)
 		if werr := p.reporter.WriteFinding(f); werr != nil {
 			warnf("report: %v\n", werr)
@@ -443,6 +482,9 @@ func (p *Pipeline) detectServices(ctx context.Context, openPorts []portscan.Resu
 	svcOpts := servicedetect.DefaultOptions()
 	svcOpts.Threads = p.cfg.ServiceDetectThreads
 	svcOpts.TimeoutSeconds = p.cfg.ServiceDetectTimeout
+	progress := p.progress(ctx, "服务识别", "端点", int64(len(eps)))
+	defer progress.Close()
+	svcOpts.OnComplete = progress.Advance
 	det := servicedetect.New(svcOpts)
 	out := make(map[string]string)
 	for res := range det.Detect(ctx, eps) {
@@ -450,6 +492,7 @@ func (p *Pipeline) detectServices(ctx context.Context, openPorts []portscan.Resu
 			continue
 		}
 		out[fmt.Sprintf("%s:%d", res.Host, res.Port)] = res.Service
+		p.recordAsset(types.Asset{Host: res.Host, Port: res.Port, Service: res.Service, Source: "service-probe", Status: "service-detected"})
 		svcLine(res.Service, res.Host, res.Port)
 		_ = p.auditor.LogInfo("service", map[string]any{
 			"host": res.Host, "port": res.Port, "service": res.Service, "version": res.Version,
@@ -465,21 +508,22 @@ func (p *Pipeline) detectServices(ctx context.Context, openPorts []portscan.Resu
 // error is reported per query, not fatal.
 func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Result {
 	infof("recon: %d search query(ies) via fofa/hunter/quake...\n", len(queries))
-	opts := uncover.DefaultOptions()
-	opts.FofaServer = os.Getenv("FOFA_SERVER")
-	opts.Proxy = p.cfg.ProxyURL
-	if len(p.cfg.ReconAgents) > 0 {
-		opts.Agents = append([]string(nil), p.cfg.ReconAgents...)
-	}
-	if p.cfg.ReconLimit > 0 {
-		opts.Limit = p.cfg.ReconLimit
+	opts := buildReconOptions(p.cfg)
+	if opts.HunterFofa {
+		infof("recon: Hunter seeds -> FOFA port enrichment (up to %d assets per seed IP)\n", opts.Limit)
 	}
 	src := uncover.New(opts)
+	progress := p.progress(ctx, "测绘查询", "查询", int64(len(queries)))
+	defer progress.Close()
 
 	seen := make(map[string]struct{})
 	var results []portscan.Result
 	for _, q := range queries {
+		if ctx.Err() != nil {
+			break
+		}
 		assets, err := src.Query(ctx, q, p.cfg.ReconLimit)
+		progress.Advance(err)
 		if err != nil {
 			warnf("recon %q: %v\n", q, err)
 		}
@@ -497,6 +541,9 @@ func (p *Pipeline) recon(ctx context.Context, queries []string) []portscan.Resul
 			if host == "" || a.Port == 0 {
 				continue
 			}
+			a.Host = host
+			a.Status = "reported"
+			p.recordAsset(a)
 			key := fmt.Sprintf("%s:%d", host, a.Port)
 			if _, ok := seen[key]; ok {
 				continue
@@ -673,7 +720,11 @@ func (p *Pipeline) resolveDomains(ctx context.Context, domains []string) []strin
 // names, which the precise nuclei stage uses to pick each target's POCs.
 func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]string, map[string][]string) {
 	infof("HTTP probing %d target(s)...\n", len(inputs))
-	probe := httpprobe.New(buildHTTPProbeOptions(p.cfg, inputs, nil))
+	progress := p.progress(ctx, "HTTP 探测", "结果事件", -1)
+	defer progress.Close()
+	probeOpts := buildHTTPProbeOptions(p.cfg, inputs, nil)
+	probeOpts.OnComplete = progress.Advance
+	probe := httpprobe.New(probeOpts)
 	ch, err := probe.Run(ctx)
 	if err != nil {
 		warnf("httpx: %v\n", err)
@@ -713,6 +764,7 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 			hits[resp.URL] = append(hits[resp.URL], tech)
 			passive++
 		}
+		p.recordWebAsset(resp, hits[resp.URL])
 		if names := dedup(hits[resp.URL]); len(names) > 0 {
 			webLine(resp.StatusCode, resp.URL, resp.Title, names)
 		} else {
@@ -748,7 +800,9 @@ func (p *Pipeline) probeAndFingerprint(ctx context.Context, inputs []string) ([]
 		}
 		if len(targets) > 0 {
 			infof("HTTP redirect follow-up probing %d target(s)...\n", len(targets))
-			redirectProbe := httpprobe.New(buildHTTPProbeOptions(p.cfg, targets, nil))
+			redirectOpts := buildHTTPProbeOptions(p.cfg, targets, nil)
+			redirectOpts.OnComplete = progress.Advance
+			redirectProbe := httpprobe.New(redirectOpts)
 			redirectCh, redirectErr := redirectProbe.Run(ctx)
 			if redirectErr != nil {
 				warnf("httpx redirect follow-up: %v\n", redirectErr)
@@ -830,6 +884,8 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 		return nil, nil
 	}
 	infof("product-path probe: %d path(s) across %d root(s)...\n", len(paths), len(baseURLs))
+	progress := p.progress(ctx, "产品路径探测", "结果事件", -1)
+	defer progress.Close()
 
 	probe := httpprobe.New(httpprobe.Options{
 		Targets:         baseURLs,
@@ -839,7 +895,8 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 		Proxy:           p.cfg.ProxyURL,
 		// Modest concurrency: hammering one root with many paths can overwhelm a
 		// fragile target into dropping connections, which read as false negatives.
-		Threads: 15,
+		Threads:    15,
+		OnComplete: progress.Advance,
 	})
 	ch, err := probe.Run(ctx)
 	if err != nil {
@@ -867,6 +924,7 @@ func (p *Pipeline) dirProbe(ctx context.Context, baseURLs []string, known map[st
 			matched = true
 		}
 		if matched {
+			p.recordWebAsset(resp, hits[resp.URL])
 			urls = append(urls, resp.URL)
 			webLine(resp.StatusCode, resp.URL, resp.Title, dedup(hits[resp.URL]))
 		}
@@ -893,6 +951,8 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 		return
 	}
 	sc := shiro.New(keys, 10*time.Second, p.cfg.ProxyURL)
+	progress := p.progress(ctx, "Shiro 检测", "目标", int64(len(urls)))
+	defer progress.Close()
 	infof("shiro key check on %d web root(s) (%d keys)...\n", len(urls), len(keys))
 
 	sem := make(chan struct{}, 10)
@@ -911,6 +971,7 @@ func (p *Pipeline) shiroScan(ctx context.Context, urls []string) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			f, err := sc.Scan(ctx, u)
+			progress.Advance(err)
 			if err != nil || f == nil {
 				return
 			}
@@ -989,15 +1050,19 @@ func stripPathParams(path string) string {
 // runNuclei scans the live URLs. Precise mode (default) loads only the POC
 // files the fingerprint hits map to; full mode (-full) runs the whole
 // nuclei-templates directory.
-func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[string][]string) {
+func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[string][]string) (err error) {
+	defer func() {
+		if errors.Is(err, nuclei.ErrTemplatesFiltered) {
+			err = nil
+		}
+	}()
 	opts := buildNucleiOptions(p.cfg)
 	opts.TemplatesDir = p.nucleiTemplateDir()
 
 	if p.cfg.FullScan {
 		tmplDir := opts.TemplatesDir
 		if info, err := os.Stat(tmplDir); err != nil || !info.IsDir() {
-			warnf("nuclei templates not found at %s — run `dddd update` first; skipping vuln scan\n", tmplDir)
-			return
+			return fmt.Errorf("nuclei templates unavailable at %s; run `dddd update` first", tmplDir)
 		}
 		infof("nuclei full scan: %d target(s) x all templates...\n", len(urls))
 	} else if strings.TrimSpace(p.cfg.PocName) != "" {
@@ -1005,52 +1070,83 @@ func (p *Pipeline) runNuclei(ctx context.Context, urls []string, fpHits map[stri
 		targets := directPOCTargets(urls)
 		if len(pocs) == 0 || len(targets) == 0 {
 			infoln("nuclei fuzzy POC: no matched POC or target, skipping vuln scan")
-			return
+			return nil
 		}
 		opts.Templates = pocs
 		infof("nuclei fuzzy POC scan: %d target(s) x %d POC(s)...\n", len(targets), len(pocs))
-		p.runNucleiBatch(ctx, opts, targets)
-		return
+		return p.runNucleiBatch(ctx, opts, targets)
 	} else {
 		targetPOCs := p.resolvePOCTargets(fpHits)
 		if len(targetPOCs) == 0 {
 			infoln("nuclei precise: no fingerprint-matched POCs, skipping vuln scan")
-			return
+			return nil
 		}
-		p.runPreciseNuclei(ctx, opts, targetPOCs)
-		return
+		return p.runPreciseNuclei(ctx, opts, targetPOCs)
 	}
 
-	p.runNucleiBatch(ctx, opts, urls)
+	return p.runNucleiBatch(ctx, opts, urls)
 }
 
-func (p *Pipeline) runPreciseNuclei(ctx context.Context, baseOpts nuclei.Options, targetPOCs map[string][]string) {
+func (p *Pipeline) runPreciseNuclei(ctx context.Context, baseOpts nuclei.Options, targetPOCs map[string][]string) error {
+	var failures []error
+	completed := false
 	groups := groupTargetsByTemplates(targetPOCs)
 	infof("nuclei precise scan: %d target group(s) across %d target(s)...\n", len(groups), len(targetPOCs))
-	for _, group := range groups {
+	for i, group := range groups {
 		opts := baseOpts
 		opts.Templates = group.templates
-		infof("nuclei precise group: %d target(s) x %d POC(s)...\n", len(group.targets), len(group.templates))
-		p.runNucleiBatch(ctx, opts, group.targets)
+		infof("nuclei precise group %d/%d: %d target(s) x %d POC(s)...\n", i+1, len(groups), len(group.targets), len(group.templates))
+		err := p.runNucleiBatch(ctx, opts, group.targets)
+		switch {
+		case err == nil:
+			completed = true
+		case !errors.Is(err, nuclei.ErrTemplatesFiltered):
+			failures = append(failures, err)
+		}
 	}
+	if !completed {
+		return errors.Join(failures...)
+	}
+	return nil
 }
 
-func (p *Pipeline) runNucleiBatch(ctx context.Context, opts nuclei.Options, urls []string) int {
+func (p *Pipeline) runNucleiBatch(ctx context.Context, opts nuclei.Options, urls []string) (batchErr error) {
+	progress := p.progress(ctx, "Nuclei", "批次", 1)
+	matched := 0
+	defer func() {
+		switch {
+		case ctx.Err() != nil:
+			infoln("nuclei outcome: canceled")
+		case errors.Is(batchErr, nuclei.ErrTemplatesFiltered):
+			infoln("nuclei outcome: skipped (all candidate templates filtered out)")
+		case batchErr != nil:
+			warnf("nuclei outcome: failed: %v\n", batchErr)
+		case matched == 0:
+			infoln("nuclei outcome: completed with no findings")
+		default:
+			infof("nuclei outcome: completed with %d match(es)\n", matched)
+		}
+		if ctx.Err() == nil && !errors.Is(batchErr, nuclei.ErrTemplatesFiltered) {
+			progress.Advance(batchErr)
+		}
+		progress.Close()
+	}()
 	sc, err := nuclei.New(ctx, opts)
 	if err != nil {
 		warnf("nuclei init: %v\n", err)
-		return 0
+		return err
 	}
 	defer sc.Close()
 
 	findings, errCh, err := sc.Scan(ctx, urls)
 	if err != nil {
 		warnf("nuclei scan: %v\n", err)
-		return 0
+		return err
 	}
 
 	n := 0
 	for f := range findings {
+		matched++
 		if p.counts.SeenFinding(f) {
 			continue
 		}
@@ -1065,11 +1161,14 @@ func (p *Pipeline) runNucleiBatch(ctx context.Context, opts nuclei.Options, urls
 	}
 	for e := range errCh {
 		if e != nil {
-			warnf("nuclei: %v\n", e)
+			batchErr = errors.Join(batchErr, e)
+			if !errors.Is(e, nuclei.ErrTemplatesFiltered) {
+				warnf("nuclei: %v\n", e)
+			}
 		}
 	}
 	infof("findings: %d\n", n)
-	return n
+	return batchErr
 }
 
 // resolvePOCs maps the fingerprint hits to the deduplicated set of POC files to
@@ -1556,12 +1655,15 @@ func (p *Pipeline) vhostProbe(ctx context.Context, liveURLs []string) ([]string,
 	}
 	fmt.Printf("\x1b[32m[*]\x1b[0m vhost probe: %d domain-bound candidate(s)...\n", len(targets))
 
+	progress := p.progress(ctx, "Host 绑定探测", "结果事件", -1)
+	defer progress.Close()
 	probe := httpprobe.New(httpprobe.Options{
 		Targets:         targets,
 		TechDetect:      true,
 		FollowRedirects: true,
 		Proxy:           p.cfg.ProxyURL,
 		Threads:         50,
+		OnComplete:      progress.Advance,
 	})
 	ch, err := probe.Run(ctx)
 	if err != nil {
@@ -1591,6 +1693,7 @@ func (p *Pipeline) vhostProbe(ctx context.Context, liveURLs []string) ([]string,
 			}
 			hits[resp.URL] = append(hits[resp.URL], tech)
 		}
+		p.recordWebAsset(resp, hits[resp.URL])
 	}
 	fmt.Printf("\x1b[32m[*]\x1b[0m vhost probe: %d live domain-bound root(s)\n", len(urls))
 	return urls, hits
@@ -1667,14 +1770,21 @@ func (p *Pipeline) runLowPerception(ctx context.Context, queries []string) error
 	var openPorts []portscan.Result
 	services := make(map[string]string)
 
+	progress := p.progress(ctx, "Hunter 低感知", "查询", int64(len(queries)))
+	defer progress.Close()
 	for _, q := range queries {
+		if ctx.Err() != nil {
+			break
+		}
 		fmt.Printf("\x1b[32m[*]\x1b[0m hunter low-perception query: %s\n", q)
 		assets, qerr := client.Search(ctx, q)
+		progress.Advance(qerr)
 		if qerr != nil {
 			fmt.Printf("\x1b[31m[!]\x1b[0m hunter: %v\n", qerr)
 			continue
 		}
 		for _, a := range assets {
+			p.recordAsset(types.Asset{Host: a.IP, IP: a.IP, Port: a.Port, Title: a.Title, Service: a.Protocol, Source: "hunter", Status: "reported"})
 			if a.IsWeb {
 				rootURL := fmt.Sprintf("%s://%s:%d", webScheme(a.Protocol), a.IP, a.Port)
 				b := hunter.ParseBanner(a.Banner)
@@ -1692,6 +1802,7 @@ func (p *Pipeline) runLowPerception(ctx context.Context, queries []string) error
 					}
 					fpHits[rootURL] = append(fpHits[rootURL], fp.Name)
 				}
+				p.recordAsset(types.Asset{Host: a.IP, IP: a.IP, Port: a.Port, URL: rootURL, Title: a.Title, Service: a.Protocol, Fingerprints: fpHits[rootURL], Source: "hunter", Status: "reported"})
 				liveURLs = append(liveURLs, rootURL)
 				_ = p.auditor.LogInfo("hunter-web", map[string]any{"url": rootURL, "title": a.Title})
 			} else {
@@ -1704,6 +1815,7 @@ func (p *Pipeline) runLowPerception(ctx context.Context, queries []string) error
 		}
 	}
 
+	progress.Close()
 	liveURLs = dedup(liveURLs)
 	fmt.Printf("\x1b[32m[*]\x1b[0m low-perception: %d web root(s), %d service(s) — no packet sent to targets\n", len(liveURLs), len(openPorts))
 
@@ -1711,10 +1823,11 @@ func (p *Pipeline) runLowPerception(ctx context.Context, queries []string) error
 		p.bruteForce(ctx, openPorts, services)
 	}
 	if len(liveURLs) > 0 && !p.cfg.NoPoc {
-		p.runNuclei(ctx, liveURLs, fpHits)
+		err := p.runNuclei(ctx, liveURLs, fpHits)
 		if shouldRunShiro(p.cfg) {
 			p.shiroScan(ctx, liveURLs)
 		}
+		return err
 	}
 	return nil
 }

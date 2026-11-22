@@ -72,6 +72,25 @@ func Load(path string) (*Mapping, error) {
 func (m *Mapping) Products() int         { return len(m.products) }
 func (m *Mapping) GeneralPocs() []string { return m.general }
 
+// POCNames includes general and product-specific templates, without duplicates.
+func (m *Mapping) POCNames() []string {
+	seen := make(map[string]bool)
+	for _, name := range m.general {
+		seen[name] = true
+	}
+	for _, entry := range m.products {
+		for _, name := range entry.Pocs {
+			seen[name] = true
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 type ResolveStats struct {
 	Targets      int
 	MatchedNames int
