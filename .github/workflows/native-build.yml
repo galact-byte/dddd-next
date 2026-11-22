@@ -28,7 +28,7 @@ jobs:
             goos: linux
             goarch: arm64
             binary: dddd
-          - runner: macos-14
+          - runner: macos-15
             goos: darwin
             goarch: arm64
             binary: dddd
