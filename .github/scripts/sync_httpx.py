@@ -27,6 +27,7 @@ def retry_windows(operation):
 
 
 def move_directory(source, target):
+    source.chmod(stat.S_IMODE(source.stat().st_mode) | stat.S_IWUSR)
     retry_windows(lambda: source.rename(target))
 
 
