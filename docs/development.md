@@ -23,7 +23,9 @@ go vet ./...
 
 构建后的帮助入口为 `dddd help`；使用方式和配置目录见[使用指南](usage.md)。
 
-`httpx v1.9.0` 通过 `go.mod` 的相对路径替换使用 `third_party/httpx/`，修复运行中限速器被按值复制的数据竞争。源码构建需保留该目录，无须额外安装。来源、许可证、四行补丁和以后升级或移除替换的方法见[第三方依赖维护说明](../third_party/README.md)。
+`httpx` 通过 `go.mod` 的相对路径替换使用 `third_party/httpx/`，修复运行中限速器被按值复制的数据竞争。源码构建需保留该目录，无须额外安装。来源、许可证、补丁与升级方法见[第三方依赖维护说明](../third_party/README.md)，当前源码版本以[来源记录](../third_party/httpx-upstream.json)为准。
+
+Dependabot 每周集中检查根模块及本地 httpx 模块的 Go 依赖。httpx 版本变化时，自动化先同步完整上游源码、保留补丁并完成测试，再提交回同一依赖 PR；补丁冲突或兼容性检查失败会中止。依赖 PR 仍需审阅，不自动合并或发版，常规升级随后续功能或修复版本交付。
 
 ## 项目结构
 
@@ -58,7 +60,7 @@ dddd-next/
 │   ├── reporter/                # TXT / JSON / HTML 报告及资产 CSV
 │   ├── audit/                   # 审计日志
 │   └── updater/                 # 程序本体及 Nuclei 模板更新
-├── third_party/httpx/           # httpx v1.9.0 最小并发修复及完整上游源码
+├── third_party/httpx/           # httpx 最小并发修复及完整上游模块源码
 ├── pkg/fingerdsl/               # 指纹表达式 DSL
 ├── configs/
 │   ├── fingers/                # 编译进程序的基础指纹库

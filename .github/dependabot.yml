@@ -9,9 +9,7 @@ updates:
       day: monday
     allow:
       - dependency-type: all
-    # 本地 replace 提供 httpx 源码；升级时需同步源码并保留并发修复补丁。
-    ignore:
-      - dependency-name: github.com/projectdiscovery/httpx
+    # httpx 的版本更新由 source-sync 工作流补齐完整源码及并发补丁。
     open-pull-requests-limit: 1
     groups:
       go-dependencies:

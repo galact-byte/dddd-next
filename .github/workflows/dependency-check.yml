@@ -6,8 +6,12 @@ on:
       - go.mod
       - go.sum
       - third_party/httpx/**
+      - third_party/httpx-upstream.json
+      - third_party/httpx-ratelimiter.patch
+      - .github/scripts/**
       - .github/dependabot.yml
       - .github/workflows/dependency-check.yml
+      - .github/workflows/httpx-source-sync.yml
   workflow_dispatch:
 
 permissions:
@@ -35,6 +39,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Test dependency source synchronizer
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
+      - name: Verify httpx source matches required version
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 .github/scripts/sync_httpx.py --check
 
       - name: Verify modules
         run: go mod verify

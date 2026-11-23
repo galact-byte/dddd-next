@@ -415,7 +415,7 @@ require (
 	moul.io/http2curl v1.0.0 // indirect
 )
 
-// httpx v1.9.0: keep the active rate limiter by pointer; see third_party/README.md.
+// httpx: keep the active rate limiter by pointer; see third_party/README.md.
 replace github.com/projectdiscovery/httpx => ./third_party/httpx
 
 replace gitlab.com/gitlab-org/api/client-go => gitlab.com/gitlab-org/api/client-go v0.130.1

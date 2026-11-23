@@ -1,0 +1,187 @@
+name: Sync httpx source
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - go.mod
+  workflow_dispatch:
+    inputs:
+      pull-request:
+        description: Existing dependency update PR number
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: httpx-source-${{ github.event.pull_request.number || inputs.pull-request }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+      branch: ${{ steps.pr.outputs.branch }}
+      head: ${{ steps.pr.outputs.head }}
+    steps:
+      - name: Validate existing PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull-request }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/httpx-pr.json"
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          pr = json.loads((Path(os.environ['RUNNER_TEMP']) / 'httpx-pr.json').read_text())
+          repo = os.environ['GITHUB_REPOSITORY']
+          assert pr['state'] == 'open', 'PR must be open'
+          assert pr['head']['repo']['full_name'] == pr['base']['repo']['full_name'] == repo, 'fork PRs are not supported'
+          assert pr['base']['ref'] == os.environ['DEFAULT_BRANCH'], 'PR must target the default branch'
+          assert pr['head']['ref'] != pr['base']['ref'], 'cannot write to the default branch'
+          if os.environ['EVENT_NAME'] != 'workflow_dispatch':
+              assert pr['user']['login'] == 'dependabot[bot]', 'automatic synchronization is limited to Dependabot'
+          branch, head = pr['head']['ref'], pr['head']['sha']
+          subprocess.run(['git', 'check-ref-format', '--branch', branch], check=True, capture_output=True)
+          assert re.fullmatch('[0-9a-f]{40}', head)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'branch={branch}\nhead={head}\n')
+          PY
+
+      - name: Checkout trusted maintenance scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Preserve trusted synchronizer and provenance
+        run: |
+          mkdir -p "$RUNNER_TEMP/httpx-trusted"
+          cp .github/scripts/sync_httpx.py "$RUNNER_TEMP/httpx-trusted/"
+          cp third_party/httpx-upstream.json "$RUNNER_TEMP/httpx-trusted/"
+
+      - name: Checkout dependency PR without write credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Synchronize complete httpx module and patch
+        id: diff
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          if [ ! -f third_party/httpx-upstream.json ]; then
+            cp "$RUNNER_TEMP/httpx-trusted/httpx-upstream.json" third_party/httpx-upstream.json
+          fi
+          python3 "$RUNNER_TEMP/httpx-trusted/sync_httpx.py"
+          git add -N -- third_party/httpx-upstream.json
+          git add -f -N -- third_party/httpx
+          if git diff --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve module graph and check provenance
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          go mod tidy
+          go mod verify
+          python3 "$RUNNER_TEMP/httpx-trusted/sync_httpx.py" --check
+
+      - name: Test updated source
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          CGO_ENABLED: "0"
+        run: go test -p=2 -mod=readonly -trimpath ./...
+
+      - name: Check limiter and cancellation races
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          CGO_ENABLED: "1"
+        run: go test -p=2 -mod=readonly -race ./internal/discovery/httpprobe ./internal/app
+
+      - name: Build and smoke test updated executable
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          CGO_ENABLED: "0"
+          DDDD_SMOKE_BINARY: ${{ runner.temp }}/dddd
+        run: |
+          go build -p=2 -mod=readonly -trimpath -o "$DDDD_SMOKE_BINARY" ./cmd/dddd
+          go test -p=2 -mod=readonly -trimpath ./cmd/dddd -run '^Test(ReleaseBinarySmoke|PriorityBinarySmoke)$' -count=1 -v
+
+      - name: Export source changes only
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git diff --check
+          git diff --binary --no-renames -- go.mod go.sum third_party/httpx third_party/httpx-upstream.json > "$RUNNER_TEMP/httpx-source.patch"
+          test -s "$RUNNER_TEMP/httpx-source.patch"
+
+      - name: Pass verified source patch to publisher
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: httpx-source-patch
+          path: ${{ runner.temp }}/httpx-source.patch
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout original PR commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.head }}
+
+      - name: Download verified source patch
+        uses: actions/download-artifact@v4
+        with:
+          name: httpx-source-patch
+          path: ${{ runner.temp }}/httpx-source-patch
+
+      - name: Commit source update to the existing PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BRANCH: ${{ needs.sync.outputs.branch }}
+          EXPECTED_HEAD: ${{ needs.sync.outputs.head }}
+        run: |
+          git apply --index "$RUNNER_TEMP/httpx-source-patch/httpx-source.patch"
+          python3 - <<'PY'
+          import subprocess
+          names = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '-z']).decode().split('\0')
+          allowed = {'go.mod', 'go.sum', 'third_party/httpx-upstream.json'}
+          assert any(names), 'empty source patch'
+          for name in filter(None, names):
+              assert name in allowed or name.startswith('third_party/httpx/'), f'unexpected source patch path: {name}'
+          PY
+          current_head=$(git ls-remote origin "refs/heads/$PR_BRANCH" | cut -f1)
+          test "$current_head" = "$EXPECTED_HEAD"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -c core.hooksPath=/dev/null commit -m 'deps: 同步 httpx 上游源码并保留限速器补丁'
+          git push origin "HEAD:refs/heads/$PR_BRANCH"
+          gh workflow run dependency-check.yml --ref "$PR_BRANCH"
