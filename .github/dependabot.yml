@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - /
+      - /third_party/httpx
+    schedule:
+      interval: weekly
+      day: monday
+    allow:
+      - dependency-type: all
+    # 本地 replace 提供 httpx 源码；升级时需同步源码并保留并发修复补丁。
+    ignore:
+      - dependency-name: github.com/projectdiscovery/httpx
+    open-pull-requests-limit: 1
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"

@@ -1,0 +1,51 @@
+name: Dependency checks
+
+on:
+  pull_request:
+    paths:
+      - go.mod
+      - go.sum
+      - third_party/httpx/**
+      - .github/dependabot.yml
+      - .github/workflows/dependency-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Test
+        run: go test -mod=readonly -trimpath ./...
+
+      - name: Build
+        run: go build -mod=readonly -trimpath -o "$RUNNER_TEMP/dddd" ./cmd/dddd
+
+      - name: Smoke test executable
+        env:
+          DDDD_SMOKE_BINARY: ${{ runner.temp }}/dddd
+        run: go test -mod=readonly -trimpath ./cmd/dddd -run '^Test(ReleaseBinarySmoke|PriorityBinarySmoke)$' -count=1 -v
