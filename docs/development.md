@@ -6,7 +6,7 @@
 
 ## 构建与检查
 
-使用符合 `go.mod` 要求的 Go 工具链（当前为 Go 1.26.3）和 Git，在仓库根目录执行：
+使用符合 `go.mod` 要求的 Go 工具链（当前为 Go 1.26.4）和 Git，在仓库根目录执行：
 
 ```bash
 # Linux
@@ -25,7 +25,9 @@ go vet ./...
 
 `httpx` 通过 `go.mod` 的相对路径替换使用 `third_party/httpx/`，修复运行中限速器被按值复制的数据竞争。源码构建需保留该目录，无须额外安装。来源、许可证、补丁与升级方法见[第三方依赖维护说明](../third_party/README.md)，当前源码版本以[来源记录](../third_party/httpx-upstream.json)为准。
 
-Dependabot 每周集中检查根模块及本地 httpx 模块的 Go 依赖。httpx 版本变化时，自动化先同步完整上游源码、保留补丁并完成测试，再提交回同一依赖 PR；补丁冲突或兼容性检查失败会中止。依赖 PR 仍需审阅，不自动合并或发版，常规升级随后续功能或修复版本交付。
+Dependabot 每周集中检查根模块及本地 httpx 模块的 Go 依赖。httpx 版本变化时，自动化先同步完整上游源码、保留补丁并完成测试，再提交回同一依赖 PR；补丁冲突或兼容性检查失败会中止。依赖 PR 仍需审阅，不自动合并或发版；通过验证的升级可单独发布维护版本，也可随功能或修复版本一并交付，由维护者决定。
+
+依赖升级还需满足当前工具链和 `CGO_ENABLED=0` 构建要求：naabu 保留 v2.6.1，grdp 的替换目标保留 v1.0.3。fingerprintx 保留 v1.1.15；v1.1.16 起包含 MongoDB 探测，v1.1.19 在本地回归中会先执行该探测，耗尽非标准端口 HTTP 识别的 10 秒取消期限。go-rod 所用的 fetchup、got，以及 tlsx 所用的 zcrypto 与相关 ProjectDiscovery 基础库存在接口约束，应作为一组升级并验证，不要只提高单个模块版本。
 
 ## 项目结构
 
@@ -79,8 +81,8 @@ dddd-next/
 
 | 维度 | 原 dddd | dddd-next |
 | --- | --- | --- |
-| 依赖管理 | `lib/` 内嵌修改后的依赖 | Go modules 为主；`replace` 处理 client-go、grdp 及本地 httpx 最小补丁 |
-| Nuclei | v3.1.8 | 当前依赖 v3.8.0，官方模板独立更新 |
+| 依赖管理 | `lib/` 内嵌修改后的依赖 | Go modules 为主；`replace` 处理 grdp 及本地 httpx 最小补丁 |
+| Nuclei | v3.1.8 | 当前依赖 v3.11.1，官方模板独立更新 |
 | 项目结构 | common / lib / gopocs 等平铺模块 | cmd / internal / pkg 分层 |
 | 配置与流程 | 全局配置变量 | 标准库 CLI flag、配置传递和 context 取消 |
 | 测试 | 原版测试较少 | 单元测试、回归测试和实际程序冒烟测试 |

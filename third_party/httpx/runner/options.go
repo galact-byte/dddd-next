@@ -204,6 +204,9 @@ type Options struct {
 	// Deprecated: use OutputFilterPageType with "error" instead.
 	OutputFilterErrorPage bool
 	OutputFilterPageType      goflags.StringSlice
+	// KnowledgeBase enables knowledge base classification using dit. It is
+	// implied by OutputFilterPageType/OutputFilterErrorPage, which need it.
+	KnowledgeBase             bool
 	FilterOutDuplicates       bool
 	OutputFilterContentLength string
 	InputRawRequest           string
@@ -331,7 +334,7 @@ type Options struct {
 	NoDecode             bool
 	Screenshot           bool
 	UseInstalledChrome   bool
-	TlsImpersonate       bool
+	TlsImpersonate       string
 	DisableStdin         bool
 	HttpApiEndpoint      string
 	NoScreenshotBytes    bool
@@ -343,7 +346,7 @@ type Options struct {
 	HeadlessOptionalArguments goflags.StringSlice
 	Protocol                  string
 	OutputFilterErrorPagePath string
-	DisableStdout             bool
+	DisableStdout bool
 
 	JavascriptCodes goflags.StringSlice
 
@@ -410,8 +413,9 @@ func ParseOptions() *Options {
 		flagSet.BoolVarP(&options.OutputServerHeader, "web-server", "server", false, "display server name"),
 		flagSet.BoolVarP(&options.TechDetect, "tech-detect", "td", false, "display technology in use based on wappalyzer dataset"),
 		flagSet.StringVarP(&options.CustomFingerprintFile, "custom-fingerprint-file", "cff", "", "path to a custom fingerprint file for technology detection"),
-		flagSet.BoolVar(&options.CPEDetect, "cpe", false, "display CPE (Common Platform Enumeration) based on awesome-search-queries"),
+		flagSet.BoolVar(&options.CPEDetect, "cpe", false, "display CPE (Common Platform Enumeration) with product version based on awesome-search-queries"),
 		flagSet.BoolVarP(&options.WordPress, "wordpress", "wp", false, "display WordPress plugins and themes"),
+		flagSet.BoolVarP(&options.KnowledgeBase, "knowledge-base", "kb", false, "enable knowledge base classification"),
 		flagSet.BoolVar(&options.OutputMethod, "method", false, "display http request method"),
 		flagSet.BoolVarP(&options.OutputWebSocket, "websocket", "ws", false, "display server using websocket"),
 		flagSet.BoolVar(&options.OutputIP, "ip", false, "display host ip"),
@@ -441,7 +445,7 @@ func ParseOptions() *Options {
 		flagSet.StringVarP(&options.OutputMatchWordsCount, "match-word-count", "mwc", "", "match response body with specified word count (-mwc 43,55)"),
 		flagSet.StringSliceVarP(&options.OutputMatchFavicon, "match-favicon", "mfc", nil, "match response with specified favicon hash (-mfc 1494302000)", goflags.NormalizedStringSliceOptions),
 		flagSet.StringSliceVarP(&options.OutputMatchString, "match-string", "ms", nil, "match response with specified string (-ms admin)", goflags.NormalizedStringSliceOptions),
-		flagSet.StringSliceVarP(&options.OutputMatchRegex, "match-regex", "mr", nil, "match response with specified regex (-mr admin)", goflags.NormalizedStringSliceOptions),
+		flagSet.StringSliceVarP(&options.OutputMatchRegex, "match-regex", "mr", nil, "match response with specified regex (-mr admin)", goflags.StringSliceOptions),
 		flagSet.StringSliceVarP(&options.OutputMatchCdn, "match-cdn", "mcdn", nil, fmt.Sprintf("match host with specified cdn provider (%s)", cdncheck.DefaultCDNProviders), goflags.NormalizedStringSliceOptions),
 		flagSet.StringVarP(&options.OutputMatchResponseTime, "match-response-time", "mrt", "", "match response with specified response time in seconds (-mrt '< 1')"),
 		flagSet.StringVarP(&options.OutputMatchCondition, "match-condition", "mdc", "", "match response with dsl expression condition"),
@@ -462,7 +466,7 @@ func ParseOptions() *Options {
 		flagSet.StringVarP(&options.OutputFilterWordsCount, "filter-word-count", "fwc", "", "filter response body with specified word count (-fwc 423,532)"),
 		flagSet.StringSliceVarP(&options.OutputFilterFavicon, "filter-favicon", "ffc", nil, "filter response with specified favicon hash (-ffc 1494302000)", goflags.NormalizedStringSliceOptions),
 		flagSet.StringSliceVarP(&options.OutputFilterString, "filter-string", "fs", nil, "filter response with specified string (-fs admin)", goflags.NormalizedStringSliceOptions),
-		flagSet.StringSliceVarP(&options.OutputFilterRegex, "filter-regex", "fe", nil, "filter response with specified regex (-fe admin)", goflags.NormalizedStringSliceOptions),
+		flagSet.StringSliceVarP(&options.OutputFilterRegex, "filter-regex", "fe", nil, "filter response with specified regex (-fe admin)", goflags.StringSliceOptions),
 		flagSet.StringSliceVarP(&options.OutputFilterCdn, "filter-cdn", "fcdn", nil, fmt.Sprintf("filter host with specified cdn provider (%s)", cdncheck.DefaultCDNProviders), goflags.NormalizedStringSliceOptions),
 		flagSet.StringVarP(&options.OutputFilterResponseTime, "filter-response-time", "frt", "", "filter response with specified response time in seconds (-frt '> 1')"),
 		flagSet.StringVarP(&options.OutputFilterCondition, "filter-condition", "fdc", "", "filter response with dsl expression condition"),
@@ -532,7 +536,7 @@ func ParseOptions() *Options {
 		flagSet.BoolVar(&options.RandomAgent, "random-agent", true, "enable Random User-Agent to use"),
 		flagSet.BoolVar(&options.AutoReferer, "auto-referer", false, "set the Referer header to the current URL"),
 		flagSet.VarP(&options.CustomHeaders, "header", "H", "custom http headers to send with request"),
-		flagSet.StringVarP(&options.Proxy, "proxy", "http-proxy", "", "proxy (http|socks) to use (eg http://127.0.0.1:8080)"),
+		flagSet.StringVarP(&options.Proxy, "proxy", "http-proxy", "", "proxy (http|socks) to use (eg http://127.0.0.1:8080); falls back to HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars"),
 		flagSet.BoolVar(&options.Unsafe, "unsafe", false, "send raw requests skipping golang normalization"),
 		flagSet.BoolVar(&options.Resume, "resume", false, "resume scan using resume.cfg"),
 		flagSet.BoolVarP(&options.FollowRedirects, "follow-redirects", "fr", false, "follow http redirects"),
@@ -547,7 +551,7 @@ func ParseOptions() *Options {
 		flagSet.BoolVarP(&options.LeaveDefaultPorts, "leave-default-ports", "ldp", false, "leave default http/https ports in host header (eg. http://host:80 - https://host:443"),
 		flagSet.BoolVar(&options.ZTLS, "ztls", false, "use ztls library with autofallback to standard one for tls13"),
 		flagSet.BoolVar(&options.NoDecode, "no-decode", false, "avoid decoding body"),
-		flagSet.BoolVarP(&options.TlsImpersonate, "tls-impersonate", "tlsi", false, "enable experimental client hello (ja3) tls randomization"),
+		flagSet.StringVarP(&options.TlsImpersonate, "tls-impersonate", "tlsi", "", "enable experimental client hello (ja3) tls impersonation (chrome, or ja3 full string)"),
 		flagSet.BoolVar(&options.DisableStdin, "no-stdin", false, "Disable Stdin processing"),
 		flagSet.StringVarP(&options.HttpApiEndpoint, "http-api-endpoint", "hae", "", "experimental http api endpoint"),
 		flagSet.StringVarP(&options.SecretFile, "secret-file", "sf", "", "path to the secret file for authentication"),
@@ -696,6 +700,43 @@ func ParseOptions() *Options {
 	return options
 }
 
+func (options *Options) HasMatcherOrFilter() bool {
+	return len(options.matchStatusCode) > 0 ||
+		len(options.matchContentLength) > 0 ||
+		len(options.filterStatusCode) > 0 ||
+		len(options.filterContentLength) > 0 ||
+		len(options.matchRegexes) > 0 ||
+		len(options.filterRegexes) > 0 ||
+		len(options.matchLinesCount) > 0 ||
+		len(options.matchWordsCount) > 0 ||
+		len(options.filterLinesCount) > 0 ||
+		len(options.filterWordsCount) > 0 ||
+		len(options.OutputMatchString) > 0 ||
+		len(options.OutputFilterString) > 0 ||
+		len(options.OutputMatchFavicon) > 0 ||
+		len(options.OutputFilterFavicon) > 0 ||
+		len(options.OutputMatchCdn) > 0 ||
+		len(options.OutputFilterCdn) > 0 ||
+		len(options.OutputFilterPageType) > 0 ||
+		options.OutputMatchCondition != "" ||
+		options.OutputFilterCondition != "" ||
+		options.OutputMatchResponseTime != "" ||
+		options.OutputFilterResponseTime != ""
+}
+
+// hasPageTypeFilter reports whether a filter that depends on the page type
+// classification is in use.
+func (options *Options) hasPageTypeFilter() bool {
+	return len(options.OutputFilterPageType) > 0 || options.OutputFilterErrorPage
+}
+
+// classificationEnabled reports whether the knowledge base classifier should be
+// loaded. It is opt-in via -kb, and implied by the page type filters that
+// cannot work without it.
+func (options *Options) classificationEnabled() bool {
+	return options.KnowledgeBase || options.hasPageTypeFilter()
+}
+
 func (options *Options) ValidateOptions() error {
 	if options.InputFile != "" && !fileutilz.FileNameIsGlob(options.InputFile) && !fileutil.FileExists(options.InputFile) {
 		return fmt.Errorf("file '%s' does not exist", options.InputFile)
@@ -777,11 +818,10 @@ func (options *Options) ValidateOptions() error {
 	var resolvers []string
 	for _, resolver := range options.Resolvers {
 		if fileutil.FileExists(resolver) {
-			chFile, err := fileutil.ReadFile(resolver)
-			if err != nil {
-				return errors.Wrapf(err, "Couldn't process resolver file \"%s\"", resolver)
-			}
-			for line := range chFile {
+			for line, err := range fileutil.Lines(resolver) {
+				if err != nil {
+					return errors.Wrapf(err, "Couldn't process resolver file \"%s\"", resolver)
+				}
 				line = strings.TrimSpace(line)
 				if line != "" && strings.Contains(line, ",") {
 					for item := range strings.SplitSeq(line, ",") {
@@ -893,6 +933,10 @@ func (options *Options) configureOutput() {
 	if options.OutputFilterErrorPage && len(options.OutputFilterPageType) == 0 {
 		gologger.Info().Msg("-fep is deprecated, use -fpt error instead")
 		options.OutputFilterPageType = goflags.StringSlice{"error"}
+	}
+	// page type filters cannot work without the classifier
+	if options.hasPageTypeFilter() {
+		options.KnowledgeBase = true
 	}
 }
 
